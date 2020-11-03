@@ -6,12 +6,12 @@
     </head>
     <body>
         <ul>
-            {% for (uuid, entry) in sensors %}
+            {% for (addr, entry) in sensors %}
               {% match entry.state %}
               {% when SensorState::Connected with (v) %}
-              <li>{{uuid}} = {{v}}</li>
+              <li>{{addr}}{% match entry.label %} {% when Some with (label) %}/{{label}}{% when None %} {% endmatch%} = {{v}}</li>
               {% when SensorState::Unconnected %}
-              <li>{{uuid}} down</li>
+              <li>{{addr}} down</li>
               {% endmatch %}
             {% endfor %}
         </ul>

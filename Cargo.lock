@@ -103,6 +103,7 @@ dependencies = [
  "askama",
  "askama_warp",
  "bitflags",
+ "byteorder",
  "derive_more",
  "eyre",
  "futures-util",
@@ -110,10 +111,12 @@ dependencies = [
  "once_cell",
  "regex",
  "serde",
+ "serde_json",
  "tokio",
  "uuid",
  "warp",
  "zbus",
+ "zerocopy",
  "zvariant",
 ]
 

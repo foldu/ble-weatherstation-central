@@ -1,7 +1,8 @@
-use crate::{templates, DbUuid};
+mod templates;
+
+use crate::{bluetooth::BluetoothAddress, db::AddrDbEntry};
 use futures_util::stream::{self, StreamExt};
 use tokio::signal::unix::{signal, SignalKind};
-use uuid::Uuid;
 use warp::Filter;
 
 pub(crate) fn serve(ctx: super::Context) -> (std::net::SocketAddr, impl warp::Future) {
@@ -40,22 +41,19 @@ pub(crate) fn serve(ctx: super::Context) -> (std::net::SocketAddr, impl warp::Fu
 async fn show_sensors(ctx: super::Context) -> Result<impl warp::Reply, std::convert::Infallible> {
     let sensors = ctx.sensors.read().await;
     let mut display = Vec::with_capacity(sensors.len());
-    let r_txn = ctx.env.read_txn().unwrap();
-    for (uuid, state) in sensors.iter() {
-        match ctx
-            .uuid_db
-            .get(&r_txn, &super::DbUuid::new(uuid.as_u128()))
-            .unwrap()
-        {
-            Some(entry) => display.push((
-                *uuid,
-                templates::SensorEntry {
-                    state: *state,
-                    label: entry.label.clone(),
-                },
-            )),
-            None => {}
-        }
+    let txn = ctx.db.read_txn().unwrap();
+    for (addr, state) in sensors.iter() {
+        let label = match ctx.db.get_addr(&txn, *addr).unwrap() {
+            Some(entry) => entry.label,
+            None => None,
+        };
+        display.push((
+            *addr,
+            templates::SensorEntry {
+                state: *state,
+                label,
+            },
+        ))
     }
 
     Ok(askama_warp::reply(&templates::Home::new(&display), "html"))
@@ -63,7 +61,7 @@ async fn show_sensors(ctx: super::Context) -> Result<impl warp::Reply, std::conv
 
 #[derive(serde::Deserialize)]
 struct ChangeLabel {
-    uuid: Uuid,
+    addr: BluetoothAddress,
     new_label: Option<String>,
 }
 
@@ -71,19 +69,15 @@ async fn change_label(
     ctx: super::Context,
     req: ChangeLabel,
 ) -> Result<impl warp::Reply, std::convert::Infallible> {
-    let mut w_txn = ctx.env.write_txn().unwrap();
-    let db_uuid = DbUuid::new(req.uuid.as_u128());
-    if ctx.uuid_db.get(&w_txn, &db_uuid).unwrap().is_some() {
-        ctx.uuid_db
-            .put(
-                &mut w_txn,
-                &db_uuid,
-                &super::UuidDbEntry {
-                    label: req.new_label,
-                },
-            )
-            .unwrap();
+    let mut txn = ctx.db.write_txn().unwrap();
+
+    if ctx.db.get_addr(&txn, req.addr).unwrap().is_some() {
+        let entry = AddrDbEntry {
+            label: req.new_label,
+        };
+        ctx.db.put_addr(&mut txn, req.addr, &entry).unwrap();
     }
+    txn.commit().unwrap();
 
     Ok(warp::reply::with_status("", warp::http::StatusCode::OK))
 }
@@ -95,17 +89,14 @@ async fn get_state(ctx: super::Context) -> Result<impl warp::Reply, std::convert
         state: crate::sensor::SensorState,
         label: Option<String>,
     }
-    let r_txn = ctx.env.read_txn().unwrap();
+    let txn = ctx.db.read_txn().unwrap();
 
     let reply = sensors
         .iter()
-        .map(|(uuid, state)| {
-            let db_entry = ctx
-                .uuid_db
-                .get(&r_txn, &DbUuid::new(uuid.as_u128()))
-                .unwrap();
+        .map(|(addr, state)| {
+            let db_entry = ctx.db.get_addr(&txn, *addr).unwrap();
             (
-                uuid,
+                addr,
                 ReplyEntry {
                     state: *state,
                     label: db_entry.and_then(|entry| entry.label),

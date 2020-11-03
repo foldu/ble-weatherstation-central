@@ -1,20 +1,20 @@
-use crate::sensor::SensorState;
+use crate::{bluetooth::BluetoothAddress, sensor::SensorState};
 use askama::Template;
-use uuid::Uuid;
 
 #[derive(Template)]
 #[template(path = "home.html")]
 pub(crate) struct Home<'a> {
-    sensors: &'a Vec<(Uuid, SensorEntry)>,
+    sensors: &'a Vec<(BluetoothAddress, SensorEntry)>,
 }
 
+#[derive(Debug)]
 pub(crate) struct SensorEntry {
     pub(crate) state: SensorState,
     pub(crate) label: Option<String>,
 }
 
 impl<'a> Home<'a> {
-    pub(crate) fn new(sensors: &'a Vec<(Uuid, SensorEntry)>) -> Self {
+    pub(crate) fn new(sensors: &'a Vec<(BluetoothAddress, SensorEntry)>) -> Self {
         Self { sensors }
     }
 }
