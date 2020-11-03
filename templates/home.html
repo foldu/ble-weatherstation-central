@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>Weatherstation Central</title>
+    </head>
+    <body>
+        <ul>
+            {% for (uuid, entry) in sensors %}
+              {% match entry.state %}
+              {% when SensorState::Connected with (v) %}
+              <li>{{uuid}} = {{v}}</li>
+              {% when SensorState::Unconnected %}
+              <li>{{uuid}} down</li>
+              {% endmatch %}
+            {% endfor %}
+        </ul>
+    </body>
+</html>

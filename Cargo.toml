@@ -1,0 +1,22 @@
+[package]
+name = "ble-weatherstation-central"
+version = "0.1.0"
+authors = ["foldu <foldu@protonmail.com>"]
+edition = "2018"
+license = "Unlicense OR MIT"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+askama = { version = "0.10.3", features = ["with-warp"] }
+askama_warp = "0.10.0"
+derive_more = "0.99.11"
+eyre = "0.6.2"
+futures-util = "0.3.7"
+heed = "0.10.1"
+serde = { version = "1.0.117", features = ["derive"] }
+tokio = { version = "0.2.22", features = ["rt-threaded", "sync", "time", "signal"] }
+uuid = { version = "0.8.1", features = ["serde"] }
+warp = { version =  "0.2.5", default-features = false }
+zbus = "1.2.1"
