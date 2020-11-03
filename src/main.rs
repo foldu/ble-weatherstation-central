@@ -12,6 +12,9 @@ const BLE_GATT_SERVICE_ENVIRONMENTAL_SENSING_UUID: &str = "0000180f-0000-1000-80
 
 async fn run() -> Result<(), Error> {
     let ctx = Context::create()?;
+    let bluetooth_task = bluetooth::bluetooth_task()?;
+    bluetooth_task.await?;
+    return Ok(());
     // FIXME:
     {
         let mut sensors = ctx.sensors.write().await;

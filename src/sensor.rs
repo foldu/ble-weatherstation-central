@@ -120,7 +120,7 @@ mod test {
 
     #[test]
     fn celsius_convert() {
-        assert!(Celsius::try_from(-420_00).is_err());
+        assert!(Celsius::try_from(-320_00).is_err());
         assert!(Celsius::try_from(100_00).is_ok())
     }
 
