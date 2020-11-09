@@ -113,9 +113,13 @@ pub(crate) fn bluetooth_thread(
             for (object_path, interfaces) in objs {
                 if let Some(obj) = interpret_object(&object_path, interfaces) {
                     match obj {
-                        BluezObject::Interface { discovering: false } => {
+                        BluezObject::Interface {
+                            discovering: false,
+                            interface,
+                        } => {
                             Adapter1Proxy::new_for(&dbus, "org.bluez", object_path.as_str())?
                                 .start_discovery()?;
+                            tracing::info!("Started discovery for interface {}", interface);
                             sleep_time = Duration::from_secs(10);
                         }
                         BluezObject::WeatherstationDevice {
@@ -129,6 +133,7 @@ pub(crate) fn bluetooth_thread(
                             address,
                             ..
                         } if !connected_devices.contains_key(&address) => {
+                            tracing::info!("Connected new device {}", address);
                             let ws = Weatherstation::from_device_path(object_path);
                             connected_devices.insert(address, ws);
                         }
@@ -152,7 +157,9 @@ pub(crate) fn bluetooth_thread(
             ) {
                 Ok(()) | Err(flume::RecvTimeoutError::Disconnected) => {
                     // TODO: parallelize this, takes about 2 seconds per device
+                    tracing::info!("Disconnecting devices");
                     for (addr, ws) in connected_devices {
+                        tracing::info!("Disconnecting {}", addr);
                         ws.disconnect(&dbus)?;
                     }
                     break Ok(());
@@ -177,9 +184,10 @@ pub(crate) fn bluetooth_thread(
 }
 
 #[derive(Debug)]
-enum BluezObject {
+enum BluezObject<'a> {
     Interface {
         discovering: bool,
+        interface: &'a str,
     },
 
     WeatherstationDevice {
@@ -232,10 +240,13 @@ fn interpret_object(
             })
         }
 
-        [_interface] => {
+        [interface] => {
             let bluez_adapter = interfaces.get("org.bluez.Adapter1")?;
             let discovering = *bluez_adapter.get("Discovering")?.downcast_ref::<bool>()?;
-            Some(BluezObject::Interface { discovering })
+            Some(BluezObject::Interface {
+                discovering,
+                interface,
+            })
         }
         _ => None,
     }

@@ -38,7 +38,8 @@ async fn run() -> Result<(), eyre::Error> {
         }
     };
 
-    let (_addr, svr) = http::serve(ctx, shutdown);
+    let (addr, svr) = http::serve(ctx, shutdown);
+    tracing::info!("Started server on {}", addr);
 
     svr.await;
 
@@ -48,6 +49,9 @@ async fn run() -> Result<(), eyre::Error> {
 }
 
 fn main() -> Result<(), eyre::Error> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
     let mut rt = tokio::runtime::Builder::new()
         .threaded_scheduler()
         .core_threads(2)
