@@ -4,6 +4,8 @@ use crate::{bluetooth::BluetoothAddress, db::AddrDbEntry};
 use std::future::Future;
 use warp::Filter;
 
+// TODO: add error handling after warp 0.3
+
 pub(crate) fn serve(
     ctx: super::Context,
     shutdown: impl Future<Output = ()> + Send + Sync + 'static,
