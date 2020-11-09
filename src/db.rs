@@ -58,4 +58,12 @@ impl Db {
             .iter(txn)
             .map(|it| it.map(|res| res.map(|(addr, _)| BluetoothAddress::from(addr.get()))))
     }
+
+    pub fn delete_addr<T>(
+        &self,
+        txn: &mut RwTxn<'_, '_, T>,
+        addr: BluetoothAddress,
+    ) -> Result<bool, heed::Error> {
+        self.addr_db.delete(txn, &DbBtAddr::new(addr.as_u64()))
+    }
 }

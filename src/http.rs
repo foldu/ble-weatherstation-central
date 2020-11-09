@@ -26,12 +26,27 @@ pub(crate) fn serve(
         .and(warp::filters::body::json())
         .and_then(change_label);
 
+    let forget = warp::delete()
+        .and(warp::path!("api" / "delete"))
+        .and(ctx.clone())
+        .and(warp::filters::body::json())
+        .and_then(forget);
+
     let get_state = warp::get()
         .and(warp::path!("api" / "state"))
         .and(ctx.clone())
         .and_then(get_state);
 
-    let routes = home.or(change_label).or(get_state);
+    let script = warp::get()
+        .and(warp::path!("static" / "script.js"))
+        .map(|| {
+            warp::reply::with_status(
+                include_str!("../templates/script.js"),
+                warp::http::StatusCode::OK,
+            )
+        });
+
+    let routes = home.or(change_label).or(get_state).or(forget).or(script);
 
     warp::serve(routes).bind_with_graceful_shutdown(([127, 0, 0, 1], 42069), shutdown)
 }
@@ -77,6 +92,21 @@ async fn change_label(
     }
     txn.commit().unwrap();
 
+    Ok(warp::reply::with_status("", warp::http::StatusCode::OK))
+}
+
+#[derive(serde::Deserialize)]
+struct Forget {
+    addr: BluetoothAddress,
+}
+
+async fn forget(
+    ctx: super::Context,
+    req: Forget,
+) -> Result<impl warp::Reply, std::convert::Infallible> {
+    let mut txn = ctx.db.write_txn().unwrap();
+    ctx.db.delete_addr(&mut txn, req.addr).unwrap();
+    txn.commit().unwrap();
     Ok(warp::reply::with_status("", warp::http::StatusCode::OK))
 }
 
