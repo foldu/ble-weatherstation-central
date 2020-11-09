@@ -123,10 +123,21 @@ pub(crate) fn bluetooth_thread(
                             sleep_time = Duration::from_secs(10);
                         }
                         BluezObject::WeatherstationDevice {
-                            connected: false, ..
+                            connected: false,
+                            address,
+                            ..
                         } => {
-                            Device1Proxy::new_for(&dbus, "org.bluez", object_path.as_str())?
-                                .connect()?;
+                            match Device1Proxy::new_for(&dbus, "org.bluez", object_path.as_str())?
+                                .connect()
+                            {
+                                Ok(()) => {}
+                                Err(zbus::Error::MethodError(_, _, _)) => {
+                                    tracing::warn!("Could not connect to {}", address);
+                                }
+                                Err(e) => {
+                                    return Err(e.into());
+                                }
+                            };
                         }
                         BluezObject::WeatherstationDevice {
                             services_resolved: true,
