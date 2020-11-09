@@ -83,13 +83,16 @@ async fn change_label(
     req: ChangeLabel,
 ) -> Result<impl warp::Reply, std::convert::Infallible> {
     let mut txn = ctx.db.write_txn().unwrap();
-
-    if ctx.db.get_addr(&txn, req.addr).unwrap().is_some() {
-        let entry = AddrDbEntry {
-            label: req.new_label,
-        };
-        ctx.db.put_addr(&mut txn, req.addr, &entry).unwrap();
-    }
+    let entry = AddrDbEntry {
+        label: req.new_label,
+    };
+    ctx.db.put_addr(&mut txn, req.addr, &entry).unwrap();
+    //if ctx.db.get_addr(&txn, req.addr).unwrap().is_some() {
+    //    let entry = AddrDbEntry {
+    //        label: req.new_label,
+    //    };
+    //    ctx.db.put_addr(&mut txn, req.addr, &entry).unwrap();
+    //}
     txn.commit().unwrap();
 
     Ok(warp::reply::with_status("", warp::http::StatusCode::OK))

@@ -3,18 +3,39 @@
     <head>
         <meta charset="utf-8">
         <title>Weatherstation Central</title>
-        <script async src="/static/script.js">
-        </script>
+        <script async src="/static/script.js"></script>
     </head>
     <body>
-        <ul>
+        <ul class="sensor-list">
             {% for (addr, entry) in sensors %}
-              {% match entry.state %}
-              {% when SensorState::Connected with (v) %}
-              <li>{{addr}}{% match entry.label %} {% when Some with (label) %}/{{label}}{% when None %} {% endmatch%} = {{v}}</li>
-              {% when SensorState::Unconnected %}
-              <li>{{addr}} down</li>
-              {% endmatch %}
+            {% match entry.state %}
+            {% when SensorState::Connected with (v) %}
+            <li>
+                <ul class="sensor">
+                    <li class="addr">{{addr}}</li>
+                    <li class="label">
+                        {% match entry.label %}
+                        {% when Some with (label) %}
+                        {{ label }}
+                        {% when None %}
+                        No label
+                        {% endmatch %}
+                        <button>Change label</button>
+                    </li>
+                    <li class="temperature">
+                        {{ v.temperature }}
+                    </li>
+                    <li class="pressure">
+                        {{ v.pressure }}
+                    </li>
+                    <li class="humidity">
+                        {{ v.humidity }}
+                    </li>
+                </ul>
+            </li>
+            {% when SensorState::Unconnected %}
+            <li>{{addr}} down</li>
+            {% endmatch %}
             {% endfor %}
         </ul>
     </body>
