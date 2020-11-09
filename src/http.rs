@@ -1,11 +1,13 @@
 mod templates;
 
 use crate::{bluetooth::BluetoothAddress, db::AddrDbEntry};
-use futures_util::stream::{self, StreamExt};
-use tokio::signal::unix::{signal, SignalKind};
+use std::future::Future;
 use warp::Filter;
 
-pub(crate) fn serve(ctx: super::Context) -> (std::net::SocketAddr, impl warp::Future) {
+pub(crate) fn serve(
+    ctx: super::Context,
+    shutdown: impl Future<Output = ()> + Send + Sync + 'static,
+) -> (std::net::SocketAddr, impl warp::Future) {
     let ctx = warp::any().map({
         let ctx = ctx.clone();
         move || ctx.clone()
@@ -26,12 +28,6 @@ pub(crate) fn serve(ctx: super::Context) -> (std::net::SocketAddr, impl warp::Fu
         .and(warp::path!("api" / "state"))
         .and(ctx.clone())
         .and_then(get_state);
-
-    let term = signal(SignalKind::terminate()).unwrap();
-    let int = signal(SignalKind::interrupt()).unwrap();
-    let shutdown = async move {
-        stream::select(term, int).next().await;
-    };
 
     let routes = home.or(change_label).or(get_state);
 

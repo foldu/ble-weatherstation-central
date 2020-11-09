@@ -4,30 +4,45 @@ mod http;
 mod sensor;
 
 use crate::bluetooth::BluetoothAddress;
-use std::{collections::BTreeMap, convert::TryFrom, sync::Arc};
-use tokio::sync::RwLock;
+use futures_util::{stream, StreamExt};
+use std::{collections::BTreeMap, sync::Arc};
+use tokio::{signal::unix, sync::RwLock};
+use unix::SignalKind;
 
 async fn run() -> Result<(), eyre::Error> {
     let ctx = Context::create()?;
-    let (poll, read) = bluetooth::create_bluetooth_tasks(ctx.clone())?;
-    tokio::task::spawn(poll);
-    tokio::task::spawn(read);
-    // FIXME:
-    {
-        let mut sensors = ctx.sensors.write().await;
-        sensors.insert(
-            BluetoothAddress::parse_str("00:00:00:00:00:00").unwrap(),
-            sensor::SensorState::Connected(sensor::SensorValues {
-                temperature: sensor::Celsius::try_from(10_00).unwrap(),
-                humidity: sensor::RelativeHumidity::try_from(100_00).unwrap(),
-                pressure: sensor::Pascal::from(1000),
-            }),
-        );
-    }
+    let (stopped_tx, stopped_rx) = flume::bounded(1);
 
-    let (_addr, svr) = http::serve(ctx);
+    let (bluetooth_thread, bluetooth_failed, state_update) =
+        bluetooth::bluetooth_thread(stopped_rx);
+
+    tokio::task::spawn({
+        let ctx = ctx.clone();
+        async move {
+            while let Ok(update) = state_update.recv_async().await {
+                ctx.sensors.write().await.extend(update);
+            }
+        }
+    });
+
+    let term = unix::signal(SignalKind::terminate()).unwrap();
+    let int = unix::signal(SignalKind::interrupt()).unwrap();
+    let shutdown = async move {
+        let mut signal = stream::select(term, int).map(|_| ());
+        tokio::select! {
+            _ = bluetooth_failed => {
+            }
+            _ = signal.next() => {
+                drop(stopped_tx);
+            }
+        }
+    };
+
+    let (_addr, svr) = http::serve(ctx, shutdown);
 
     svr.await;
+
+    bluetooth_thread.join().expect("Bluetooth thread crashed")?;
 
     Ok(())
 }

@@ -77,7 +77,11 @@ pub(crate) struct SensorValues {
 
 impl Display for SensorValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Humidity: {}", self.humidity)
+        write!(
+            f,
+            "Humidity: {}, Temperature: {}, pressure: {}",
+            self.humidity, self.temperature, self.pressure
+        )
     }
 }
 

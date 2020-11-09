@@ -1,29 +1,22 @@
 mod address;
 mod dbus_interfaces;
 pub use address::BluetoothAddress;
-use tokio::sync::RwLock;
+use tokio::sync::oneshot;
 
-use crate::sensor::{Celsius, Pascal, RelativeHumidity};
+use crate::sensor::{Celsius, Pascal, RelativeHumidity, SensorState};
 use byteorder::ByteOrder;
-use dbus_interfaces::{Adapter1Proxy, Battery1Proxy, Device1Proxy, GattCharacteristic1Proxy};
-use once_cell::sync::Lazy;
-use regex::Regex;
+use dbus_interfaces::{Adapter1Proxy, Device1Proxy, GattCharacteristic1Proxy};
 use std::{
     collections::{BTreeMap, HashMap},
     convert::TryFrom,
-    future::Future,
-    sync::Arc,
-    time::Duration,
+    thread,
+    time::{Duration, Instant},
 };
 use uuid::Uuid;
 use zbus::fdo::ObjectManagerProxy;
 use zvariant::{Array, ObjectPath, OwnedObjectPath, OwnedValue};
 
 use crate::sensor::SensorValues;
-
-pub struct Bluez {
-    dbus: zbus::Connection,
-}
 
 struct ConstUuid {
     s: &'static str,
@@ -41,7 +34,7 @@ const BLE_GATT_SERVICE_WEATHERSTATION: ConstUuid = ConstUuid {
 };
 
 struct Weatherstation {
-    battery_path: OwnedObjectPath,
+    device_path: OwnedObjectPath,
     temperature_path: OwnedObjectPath,
     humidity_path: OwnedObjectPath,
     pressure_path: OwnedObjectPath,
@@ -59,23 +52,32 @@ impl Weatherstation {
             pressure_path: env_sensing_chr(&device_path, "char000f"),
             humidity_path: env_sensing_chr(&device_path, "char000d"),
             temperature_path: env_sensing_chr(&device_path, "char000b"),
-            battery_path: device_path,
+            device_path,
         }
     }
 
     fn read_values(&self, dbus: &zbus::Connection) -> Result<SensorValues, eyre::Error> {
-        let temperature =
-            Self::read_with(dbus, &self.temperature_path, byteorder::BigEndian::read_i16)?;
+        let temperature = Self::read_with(
+            dbus,
+            &self.temperature_path,
+            byteorder::LittleEndian::read_i16,
+        )?;
 
-        let pressure = Self::read_with(dbus, &self.pressure_path, byteorder::BigEndian::read_u32)?;
+        let pressure =
+            Self::read_with(dbus, &self.pressure_path, byteorder::LittleEndian::read_u32)?;
 
-        let humidity = Self::read_with(dbus, &self.humidity_path, byteorder::BigEndian::read_u16)?;
+        let humidity =
+            Self::read_with(dbus, &self.humidity_path, byteorder::LittleEndian::read_u16)?;
 
         Ok(SensorValues {
             temperature: Celsius::try_from(temperature)?,
             pressure: Pascal::from(pressure),
             humidity: RelativeHumidity::try_from(humidity)?,
         })
+    }
+
+    fn disconnect(&self, dbus: &zbus::Connection) -> Result<(), zbus::Error> {
+        Device1Proxy::new_for(dbus, "org.bluez", self.device_path.as_str())?.disconnect()
     }
 
     fn read_with<T, F>(
@@ -92,100 +94,86 @@ impl Weatherstation {
     }
 }
 
-pub(crate) fn create_bluetooth_tasks(
-    ctx: crate::Context,
-) -> Result<
-    (
-        impl Future<Output = Result<(), eyre::Error>> + Send,
-        impl Future<Output = Result<(), eyre::Error>> + Send,
-    ),
-    eyre::Error,
-> {
-    let dbus = zbus::Connection::new_system()?;
-    let connected_devices = Arc::new(RwLock::new(BTreeMap::new()));
-    let poll_task = {
-        let connected_devices = connected_devices.clone();
-        async move {
-            let bluez_object_proxy = ObjectManagerProxy::new_for(&dbus, "org.bluez", "/")?;
-            loop {
-                let wait_duration = {
-                    let mut wait_duration = Duration::from_secs(30);
-                    let objs = bluez_object_proxy.get_managed_objects()?;
-                    let mut connected_devices_r = connected_devices.read().await;
-                    for (object_path, interfaces) in objs {
-                        if let Some(obj) = interpret_object(&object_path, interfaces) {
-                            match obj {
-                                BluezObject::Interface { discovering: false } => {
-                                    tokio::task::block_in_place(|| {
-                                        Adapter1Proxy::new_for(
-                                            &dbus,
-                                            "org.bluez",
-                                            object_path.as_str(),
-                                        )?
-                                        .start_discovery()
-                                    })?;
-                                }
-                                BluezObject::WeatherstationDevice {
-                                    connected: false, ..
-                                } => {
-                                    tokio::task::block_in_place(|| {
-                                        Device1Proxy::new_for(
-                                            &dbus,
-                                            "org.bluez",
-                                            object_path.as_str(),
-                                        )?
-                                        .connect()
-                                    })?;
-                                    // takes about 8 secs to connect
-                                    wait_duration = Duration::from_secs(10);
-                                }
-                                BluezObject::WeatherstationDevice {
-                                    services_resolved: true,
-                                    address,
-                                    ..
-                                } if !connected_devices_r.contains_key(&address) => {
-                                    let ws = Weatherstation::from_device_path(object_path);
-                                    drop(connected_devices_r);
-                                    connected_devices.write().await.insert(address, ws);
-                                    connected_devices_r = connected_devices.read().await;
-                                }
-                                _ => {}
-                            }
+pub(crate) fn bluetooth_thread(
+    stop: flume::Receiver<()>,
+) -> (
+    thread::JoinHandle<Result<(), eyre::Error>>,
+    oneshot::Receiver<()>,
+    flume::Receiver<BTreeMap<BluetoothAddress, SensorState>>,
+) {
+    let (tx, rx) = flume::bounded(1);
+    let poll_fn = move || -> Result<(), eyre::Error> {
+        let dbus = zbus::Connection::new_system()?;
+        let mut connected_devices = BTreeMap::new();
+        let bluez_object_proxy = ObjectManagerProxy::new_for(&dbus, "org.bluez", "/")?;
+        loop {
+            let poll_started = Instant::now();
+            let objs = bluez_object_proxy.get_managed_objects()?;
+            let mut sleep_time = Duration::from_secs(31);
+            for (object_path, interfaces) in objs {
+                if let Some(obj) = interpret_object(&object_path, interfaces) {
+                    match obj {
+                        BluezObject::Interface { discovering: false } => {
+                            Adapter1Proxy::new_for(&dbus, "org.bluez", object_path.as_str())?
+                                .start_discovery()?;
+                            sleep_time = Duration::from_secs(10);
                         }
+                        BluezObject::WeatherstationDevice {
+                            connected: false, ..
+                        } => {
+                            Device1Proxy::new_for(&dbus, "org.bluez", object_path.as_str())?
+                                .connect()?;
+                        }
+                        BluezObject::WeatherstationDevice {
+                            services_resolved: true,
+                            address,
+                            ..
+                        } if !connected_devices.contains_key(&address) => {
+                            let ws = Weatherstation::from_device_path(object_path);
+                            connected_devices.insert(address, ws);
+                        }
+                        _ => {}
                     }
-
-                    wait_duration
-                };
-
-                tokio::time::delay_for(wait_duration).await;
-            }
-
-            Ok(())
-        }
-    };
-
-    let sensor_read_task = {
-        let connected_devices = connected_devices.clone();
-        async move {
-            loop {
-                {
-                    let connected_devices = connected_devices.read().await;
-                    for (id, ws) in &*connected_devices {}
                 }
-                tokio::time::delay_for(Duration::from_secs(31)).await;
             }
-            Ok(())
+
+            let mut state = BTreeMap::new();
+            for (addr, ws) in &connected_devices {
+                let sensor_values = ws.read_values(&dbus)?;
+                state.insert(*addr, SensorState::Connected(sensor_values));
+            }
+
+            let _ = tx.send(state);
+
+            match stop.recv_timeout(
+                sleep_time
+                    .checked_sub(poll_started.elapsed())
+                    .unwrap_or(Duration::from_secs(0)),
+            ) {
+                Ok(()) | Err(flume::RecvTimeoutError::Disconnected) => {
+                    // TODO: parallelize this, takes about 2 seconds per device
+                    for (addr, ws) in connected_devices {
+                        ws.disconnect(&dbus)?;
+                    }
+                    break Ok(());
+                }
+                _ => {}
+            }
         }
     };
 
-    Ok((poll_task, sensor_read_task))
-}
+    let (error_tx, error_rx) = oneshot::channel();
+    let thread_handle = thread::spawn(move || -> Result<(), eyre::Error> {
+        match poll_fn() {
+            Err(e) => {
+                error_tx.send(()).unwrap();
+                Err(e)
+            }
+            a => a,
+        }
+    });
 
-#[derive(Debug)]
-enum CharacteristicKind {
-    Pressure,
-    Temperature,
-    Humidity,
+    (thread_handle, error_rx, rx)
 }
 
 #[derive(Debug)]
@@ -199,37 +187,20 @@ enum BluezObject {
         connected: bool,
         services_resolved: bool,
     },
-
-    WeatherstationCharacteristic(CharacteristicKind),
 }
 
 fn interpret_object(
     object_path: &OwnedObjectPath,
     interfaces: HashMap<String, HashMap<String, OwnedValue>>,
 ) -> Option<BluezObject> {
-    static PATH_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"^/org/bluez/(?P<intf>[^/]+)(/dev_(?P<device>[^/]+))?$"#).unwrap()
-    });
+    let path = object_path
+        .as_str()
+        .strip_prefix("/org/bluez/")?
+        .split('/')
+        .collect::<Vec<_>>();
 
-    let path = object_path.as_str().strip_prefix("/org/bluez/").split('/');
-
-    match path {
-        [interface, device, "service000a", chr] => {}
-
-        [interface, device] => {}
-
-        [interface] => {
-            let bluez_adapter = interfaces.get("org.bluez.Adapter1")?;
-            let discovering = *bluez_adapter.get("Discovering")?.downcast_ref::<bool>()?;
-            Some(BluezObject::Interface { discovering })
-        }
-    }
-
-    let caps = PATH_RE.captures(object_path.as_str())?;
-    let device = caps.name("intf").unwrap();
-    match caps.name("device") {
-        Some(dev) => {
-            let dev = dev.as_str().replace('_', ":");
+    match path.as_slice() {
+        [_interface, _device] => {
             let bluez_device = interfaces.get("org.bluez.Device1")?;
             let uuid_array = bluez_device.get("UUIDs")?.downcast_ref::<Array>()?;
 
@@ -260,10 +231,12 @@ fn interpret_object(
                 services_resolved,
             })
         }
-        None => {
+
+        [_interface] => {
             let bluez_adapter = interfaces.get("org.bluez.Adapter1")?;
             let discovering = *bluez_adapter.get("Discovering")?.downcast_ref::<bool>()?;
             Some(BluezObject::Interface { discovering })
         }
+        _ => None,
     }
 }
