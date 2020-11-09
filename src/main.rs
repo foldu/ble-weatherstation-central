@@ -1,25 +1,44 @@
 mod bluetooth;
 mod db;
+mod dummy;
 mod http;
 mod sensor;
 
 use crate::bluetooth::BluetoothAddress;
-use futures_util::{stream, StreamExt};
+use clap::Clap;
+use futures_util::{
+    stream::{self, Stream},
+    StreamExt,
+};
+use sensor::SensorState;
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::{signal::unix, sync::RwLock};
 use unix::SignalKind;
 
-async fn run() -> Result<(), eyre::Error> {
+type UpdateSource = dyn Stream<Item = BTreeMap<BluetoothAddress, SensorState>> + Unpin + Send;
+
+async fn run(args: Opt) -> Result<(), eyre::Error> {
     let ctx = Context::create()?;
     let (stopped_tx, stopped_rx) = flume::bounded(1);
 
-    let (bluetooth_thread, bluetooth_failed, state_update) =
+    let (bluetooth_thread, bluetooth_failed, bluetooth_update) =
         bluetooth::bluetooth_thread(stopped_rx);
+
+    let mut sources: Vec<Box<UpdateSource>> = Vec::new();
+
+    sources.push(Box::new(bluetooth_update.into_stream()));
+    if args.demo {
+        let (dummy_task, dummy_stream) = crate::dummy::dummy_sensor();
+        tokio::task::spawn(dummy_task);
+        sources.push(Box::new(dummy_stream));
+    }
+
+    let mut updates = stream::select_all(sources);
 
     tokio::task::spawn({
         let ctx = ctx.clone();
         async move {
-            while let Ok(update) = state_update.recv_async().await {
+            while let Some(update) = updates.next().await {
                 ctx.sensors.write().await.extend(update);
             }
         }
@@ -48,17 +67,27 @@ async fn run() -> Result<(), eyre::Error> {
     Ok(())
 }
 
+#[derive(Clap)]
+struct Opt {
+    /// Run with a dummy sensor
+    #[clap(short, long)]
+    demo: bool,
+}
+
 fn main() -> Result<(), eyre::Error> {
+    let args = Opt::parse();
+
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
+
     let mut rt = tokio::runtime::Builder::new()
         .threaded_scheduler()
         .core_threads(2)
         .enable_all()
         .build()?;
 
-    rt.block_on(run())
+    rt.block_on(run(args))
 }
 
 #[derive(derive_more::Deref, Clone)]
