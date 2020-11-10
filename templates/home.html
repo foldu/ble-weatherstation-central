@@ -4,34 +4,55 @@
         <meta charset="utf-8">
         <title>Weatherstation Central</title>
         <script async src="/static/script.js"></script>
+        <style type="text/css">
+            .sensor-list {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+            }
+            .sensor {
+                display: grid;
+                grid-template: "addr label forget" 1fr
+                               "sensor-values sensor-values sensor-values" 1fr
+                               / 1fr 1fr 1fr;
+            }
+            .sensor > .addr {
+                grid-area: addr;
+            }
+            .sensor > .label {
+                grid-area: label;
+            }
+            .sensor > .forget {
+                grid-area: forget;
+            }
+            .sensor > .sensor-values {
+                grid-area: sensor-values;
+                display: flex;
+            }
+        </style>
     </head>
     <body>
         <ul class="sensor-list">
             {% for (addr, entry) in sensors %}
             {% match entry.state %}
             {% when SensorState::Connected with (v) %}
-            <li>
-                <ul class="sensor">
-                    <li class="addr">{{addr}}</li>
-                    <li class="label">
-                        {% match entry.label %}
-                        {% when Some with (label) %}
-                        {{ label }}
-                        {% when None %}
-                        No label
-                        {% endmatch %}
-                        <button>Change label</button>
-                    </li>
-                    <li class="temperature">
-                        {{ v.temperature }}
-                    </li>
-                    <li class="pressure">
-                        {{ v.pressure }}
-                    </li>
-                    <li class="humidity">
-                        {{ v.humidity }}
-                    </li>
+            <li class="sensor">
+                <div class="addr">{{ addr }}</div>
+                <div class="label">
+                    {% match entry.label %}
+                    {% when Some with (label) %}
+                    {{ label }}
+                    {% when None %}
+                    No label
+                    {% endmatch %}
+                </div>
+                <ul class="sensor-values">
+                    <li class="temperature">{{ v.temperature }}</li>
+                    <li class="pressure">{{ v.pressure }}</li>
+                    <li class="humidity">{{ v.humidity }}</li>
                 </ul>
+                <div class="forget">
+                    <button>Forget</button>
+                </div>
             </li>
             {% when SensorState::Unconnected %}
             <li>{{addr}} down</li>

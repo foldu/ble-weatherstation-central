@@ -11,7 +11,7 @@ use futures_util::{
     StreamExt,
 };
 use sensor::SensorState;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, num::NonZeroU8, sync::Arc};
 use tokio::{signal::unix, sync::RwLock};
 use unix::SignalKind;
 
@@ -27,10 +27,14 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
     let mut sources: Vec<Box<UpdateSource>> = Vec::new();
 
     sources.push(Box::new(bluetooth_update.into_stream()));
-    if args.demo {
-        let (dummy_task, dummy_stream) = crate::dummy::dummy_sensor();
-        tokio::task::spawn(dummy_task);
-        sources.push(Box::new(dummy_stream));
+    if let Some(n) = args.demo {
+        tracing::info!("Simulating {} dummy sensors", n);
+        for i in 0..n.get() {
+            let (dummy_task, dummy_stream) =
+                crate::dummy::dummy_sensor(BluetoothAddress::from(u64::from(i)));
+            tokio::task::spawn(dummy_task);
+            sources.push(Box::new(dummy_stream));
+        }
     }
 
     let mut updates = stream::select_all(sources);
@@ -69,9 +73,9 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
 
 #[derive(Clap)]
 struct Opt {
-    /// Run with a dummy sensor
+    /// Run with n dummy sensors
     #[clap(short, long)]
-    demo: bool,
+    demo: Option<NonZeroU8>,
 }
 
 fn main() -> Result<(), eyre::Error> {

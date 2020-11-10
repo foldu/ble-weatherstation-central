@@ -70,14 +70,15 @@ impl Iterator for FluctuatingSensor {
     }
 }
 
-pub(crate) fn dummy_sensor() -> (
+pub(crate) fn dummy_sensor(
+    addr: BluetoothAddress,
+) -> (
     impl Future<Output = ()>,
     impl Stream<Item = BTreeMap<BluetoothAddress, SensorState>> + Sync + Send,
 ) {
     let (mut tx, rx) = mpsc::channel(1);
     let dummy_task = async move {
         let mut map = BTreeMap::new();
-        let addr = BluetoothAddress::parse_str("00:00:00:00:00:00").unwrap();
 
         for value in FluctuatingSensor::default() {
             map.insert(addr, SensorState::Connected(value));

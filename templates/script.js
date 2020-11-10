@@ -36,7 +36,7 @@ window.addEventListener("load", () => {
     for (const sensor of document.querySelectorAll(".sensor")) {
         const addr = sensor.querySelector(".addr").textContent.trim();
         const label = sensor.querySelector(".label").textContent.trim();
-        sensor.querySelector(".label button").addEventListener("click", () => {
+        sensor.querySelector(".label").addEventListener("click", () => {
             showChangeModal(addr, label);
         });
     }
