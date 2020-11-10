@@ -6,21 +6,23 @@ mod sensor;
 
 use crate::bluetooth::BluetoothAddress;
 use clap::Clap;
+use directories_next::ProjectDirs;
+use eyre::Context as _;
 use futures_util::{
     stream::{self, Stream},
     StreamExt,
 };
 use sensor::SensorState;
-use std::{collections::BTreeMap, num::NonZeroU8, sync::Arc};
+use std::{collections::BTreeMap, num::NonZeroU8, path::PathBuf, sync::Arc};
 use tokio::{signal::unix, sync::RwLock};
 use unix::SignalKind;
 
 type UpdateSource = dyn Stream<Item = BTreeMap<BluetoothAddress, SensorState>> + Unpin + Send;
 
 async fn run(args: Opt) -> Result<(), eyre::Error> {
-    let ctx = Context::create()?;
-    let (stopped_tx, stopped_rx) = flume::bounded(1);
+    let ctx = Context::create(&args)?;
 
+    let (stopped_tx, stopped_rx) = flume::bounded(1);
     let (bluetooth_thread, bluetooth_failed, bluetooth_update) =
         bluetooth::bluetooth_thread(stopped_rx);
 
@@ -71,11 +73,16 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
     Ok(())
 }
 
+/// Central server for a number of ble-weatherstations
 #[derive(Clap)]
 struct Opt {
     /// Run with n dummy sensors
     #[clap(short, long)]
     demo: Option<NonZeroU8>,
+
+    /// Path to database
+    #[clap(long)]
+    db_path: Option<PathBuf>,
 }
 
 fn main() -> Result<(), eyre::Error> {
@@ -98,11 +105,26 @@ fn main() -> Result<(), eyre::Error> {
 pub(crate) struct Context(Arc<ContextInner>);
 
 impl Context {
-    pub fn create() -> Result<Self, eyre::Error> {
-        // FIXME:
-        let db_path = "zerocopy.mdb";
-        std::fs::create_dir_all(db_path)?;
-        let db = db::Db::open(db_path)?;
+    pub fn create(args: &Opt) -> Result<Self, eyre::Error> {
+        let db_path = match args.db_path {
+            Some(ref path) => path.clone(),
+            None => {
+                let dirs = ProjectDirs::from("org", "foldu", env!("CARGO_PKG_NAME"))
+                    .ok_or_else(|| eyre::format_err!("Could not get project directories"))?;
+                dirs.data_dir()
+                    .join(concat!(env!("CARGO_PKG_NAME"), ".mdb"))
+            }
+        };
+
+        std::fs::create_dir_all(&db_path).with_context(|| {
+            format!(
+                "Failed creating database directory in {}",
+                db_path.display()
+            )
+        })?;
+
+        let db = db::Db::open(&db_path)
+            .with_context(|| format!("Opening database in {}", db_path.display()))?;
 
         let mut sensors = BTreeMap::new();
         {
