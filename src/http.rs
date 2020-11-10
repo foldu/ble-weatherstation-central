@@ -1,13 +1,14 @@
 mod templates;
 
 use crate::{bluetooth::BluetoothAddress, db::AddrDbEntry};
-use std::future::Future;
+use std::{future::Future, net::SocketAddr};
 use warp::Filter;
 
 // TODO: add error handling after warp 0.3
 
 pub(crate) fn serve(
     ctx: super::Context,
+    addr: SocketAddr,
     shutdown: impl Future<Output = ()> + Send + Sync + 'static,
 ) -> (std::net::SocketAddr, impl warp::Future) {
     let ctx = warp::any().map({
@@ -48,7 +49,7 @@ pub(crate) fn serve(
 
     let routes = home.or(change_label).or(get_state).or(forget).or(script);
 
-    warp::serve(routes).bind_with_graceful_shutdown(([127, 0, 0, 1], 42069), shutdown)
+    warp::serve(routes).bind_with_graceful_shutdown(addr, shutdown)
 }
 
 async fn show_sensors(ctx: super::Context) -> Result<impl warp::Reply, std::convert::Infallible> {

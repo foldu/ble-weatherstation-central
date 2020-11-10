@@ -13,7 +13,13 @@ use futures_util::{
     StreamExt,
 };
 use sensor::SensorState;
-use std::{collections::BTreeMap, num::NonZeroU8, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    net::{IpAddr, SocketAddr},
+    num::NonZeroU8,
+    path::PathBuf,
+    sync::Arc,
+};
 use tokio::{signal::unix, sync::RwLock};
 use unix::SignalKind;
 
@@ -63,7 +69,7 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
         }
     };
 
-    let (addr, svr) = http::serve(ctx, shutdown);
+    let (addr, svr) = http::serve(ctx, SocketAddr::from((args.host, args.port)), shutdown);
     tracing::info!("Started server on {}", addr);
 
     svr.await;
@@ -77,12 +83,20 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
 #[derive(Clap)]
 struct Opt {
     /// Run with n dummy sensors
-    #[clap(short, long)]
+    #[clap(long)]
     demo: Option<NonZeroU8>,
 
     /// Path to database
     #[clap(long)]
     db_path: Option<PathBuf>,
+
+    /// Port to listen on
+    #[clap(long, default_value = "8080")]
+    port: u16,
+
+    /// Host to bind to
+    #[clap(long, default_value = "127.0.0.1")]
+    host: IpAddr,
 }
 
 fn main() -> Result<(), eyre::Error> {
