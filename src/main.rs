@@ -2,10 +2,12 @@ mod bluetooth;
 mod db;
 mod dummy;
 mod http;
+mod opt;
 mod sensor;
 
-use crate::bluetooth::BluetoothAddress;
+use crate::{bluetooth::BluetoothAddress, dummy::dummy_sensor, opt::Opt};
 use clap::Clap;
+use db::AddrDbEntry;
 use directories_next::ProjectDirs;
 use eyre::Context as _;
 use futures_util::{
@@ -13,14 +15,8 @@ use futures_util::{
     StreamExt,
 };
 use sensor::SensorState;
-use std::{
-    collections::BTreeMap,
-    net::{IpAddr, SocketAddr},
-    num::NonZeroU8,
-    path::PathBuf,
-    sync::Arc,
-};
-use tokio::{signal::unix, sync::RwLock};
+use std::{collections::BTreeMap, net::SocketAddr, sync::Arc};
+use tokio::{signal::unix, sync::RwLock, task};
 use unix::SignalKind;
 
 type UpdateSource = dyn Stream<Item = BTreeMap<BluetoothAddress, SensorState>> + Unpin + Send;
@@ -38,29 +34,23 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
     if let Some(n) = args.demo {
         tracing::info!("Simulating {} dummy sensors", n);
         for i in 0..n.get() {
-            let (dummy_task, dummy_stream) =
-                crate::dummy::dummy_sensor(BluetoothAddress::from(u64::from(i)));
-            tokio::task::spawn(dummy_task);
+            let (dummy_task, dummy_stream) = dummy_sensor(BluetoothAddress::from(u64::from(i)));
+            task::spawn(dummy_task);
             sources.push(Box::new(dummy_stream));
         }
     }
 
-    let mut updates = stream::select_all(sources);
-
-    tokio::task::spawn({
-        let ctx = ctx.clone();
-        async move {
-            while let Some(update) = updates.next().await {
-                ctx.sensors.write().await.extend(update);
-            }
-        }
-    });
+    let update_task = task::spawn(update_task(ctx.clone(), stream::select_all(sources)));
 
     let term = unix::signal(SignalKind::terminate()).unwrap();
     let int = unix::signal(SignalKind::interrupt()).unwrap();
     let shutdown = async move {
         let mut signal = stream::select(term, int).map(|_| ());
         tokio::select! {
+            // TODO: unify crash error cases
+            Err(e) = update_task => {
+                tracing::error!("Update task failed: {}", e);
+            }
             _ = bluetooth_failed => {
             }
             _ = signal.next() => {
@@ -79,24 +69,33 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
     Ok(())
 }
 
-/// Central server for a number of ble-weatherstations
-#[derive(Clap)]
-struct Opt {
-    /// Run with n dummy sensors
-    #[clap(long)]
-    demo: Option<NonZeroU8>,
+async fn update_task(
+    ctx: Context,
+    mut updates: impl Stream<Item = BTreeMap<BluetoothAddress, SensorState>> + Unpin,
+) -> Result<(), heed::Error> {
+    while let Some(update) = updates.next().await {
+        let mut new_sensors = Vec::new();
+        {
+            let txn = ctx.db.read_txn()?;
+            for &addr in update.keys() {
+                if ctx.db.get_addr(&txn, addr)?.is_none() {
+                    new_sensors.push(addr);
+                    tracing::info!("Memorized new sensor {}", addr);
+                }
+            }
+        }
+        if !new_sensors.is_empty() {
+            let mut txn = ctx.db.write_txn()?;
+            for addr in new_sensors {
+                ctx.db.put_addr(&mut txn, addr, &AddrDbEntry::default())?;
+            }
+            txn.commit()?;
+        }
 
-    /// Path to database
-    #[clap(long)]
-    db_path: Option<PathBuf>,
+        ctx.sensors.write().await.extend(update);
+    }
 
-    /// Port to listen on
-    #[clap(long, default_value = "8080")]
-    port: u16,
-
-    /// Host to bind to
-    #[clap(long, default_value = "127.0.0.1")]
-    host: IpAddr,
+    Ok(())
 }
 
 fn main() -> Result<(), eyre::Error> {

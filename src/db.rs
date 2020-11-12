@@ -12,7 +12,7 @@ pub(crate) struct Db {
     addr_db: heed::Database<OwnedType<DbBtAddr>, SerdeBincode<AddrDbEntry>>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Default)]
 pub(crate) struct AddrDbEntry {
     pub(crate) label: Option<String>,
 }
