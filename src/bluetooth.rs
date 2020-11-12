@@ -12,26 +12,14 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use uuid::Uuid;
 use zbus::fdo::ObjectManagerProxy;
 use zvariant::{Array, ObjectPath, OwnedObjectPath, OwnedValue};
 
 use crate::sensor::SensorValues;
 
-struct ConstUuid {
-    s: &'static str,
-    u: Uuid,
-}
+const BLE_GATT_SERVICE_ENVIRONMENTAL_SENSING: &'static str = "0000180f-0000-1000-8000-00805f9b34fb";
 
-const BLE_GATT_SERVICE_ENVIRONMENTAL_SENSING: ConstUuid = ConstUuid {
-    s: "0000180f-0000-1000-8000-00805f9b34fb",
-    u: Uuid::from_u128(0x180F00001000800000805F9B34FB),
-};
-
-const BLE_GATT_SERVICE_WEATHERSTATION: ConstUuid = ConstUuid {
-    s: "e7364bd3-a1c5-4924-847d-3a9cd6e343ef",
-    u: Uuid::from_u128(307333589004604602091860631388298626031),
-};
+const BLE_GATT_SERVICE_WEATHERSTATION: &'static str = "e7364bd3-a1c5-4924-847d-3a9cd6e343ef";
 
 struct Weatherstation {
     device_path: OwnedObjectPath,
@@ -47,12 +35,12 @@ fn env_sensing_chr<'a>(device_path: &str, chr: &str) -> OwnedObjectPath {
 }
 
 impl Weatherstation {
-    fn from_device_path(device_path: OwnedObjectPath) -> Self {
+    fn from_device_path(device_path: String) -> Self {
         Self {
             pressure_path: env_sensing_chr(&device_path, "char000f"),
             humidity_path: env_sensing_chr(&device_path, "char000d"),
             temperature_path: env_sensing_chr(&device_path, "char000b"),
-            device_path,
+            device_path: ObjectPath::try_from(device_path).unwrap().into(),
         }
     }
 
@@ -108,7 +96,11 @@ pub(crate) fn bluetooth_thread(
         let bluez_object_proxy = ObjectManagerProxy::new_for(&dbus, "org.bluez", "/")?;
         loop {
             let poll_started = Instant::now();
-            let objs = bluez_object_proxy.get_managed_objects()?;
+            let objs = bluez_object_proxy
+                .get_managed_objects()?
+                .into_iter()
+                .map(|(k, v)| (k.as_str().to_string(), v))
+                .collect::<BTreeMap<_, _>>();
             let mut sleep_time = Duration::from_secs(31);
             for (object_path, interfaces) in objs {
                 if let Some(obj) = interpret_object(&object_path, interfaces) {
@@ -209,11 +201,10 @@ enum BluezObject<'a> {
 }
 
 fn interpret_object(
-    object_path: &OwnedObjectPath,
+    object_path: &str,
     interfaces: HashMap<String, HashMap<String, OwnedValue>>,
 ) -> Option<BluezObject> {
     let path = object_path
-        .as_str()
         .strip_prefix("/org/bluez/")?
         .split('/')
         .collect::<Vec<_>>();
@@ -223,12 +214,13 @@ fn interpret_object(
             let bluez_device = interfaces.get("org.bluez.Device1")?;
             let uuid_array = bluez_device.get("UUIDs")?.downcast_ref::<Array>()?;
 
+            // FIXME: bad
             let (mut environmental_sensing, mut weatherstation) = (false, false);
             for uuid in uuid_array.get() {
                 if let zvariant::Value::Str(s) = uuid {
-                    if s.as_str() == BLE_GATT_SERVICE_ENVIRONMENTAL_SENSING.s {
+                    if s.as_str() == BLE_GATT_SERVICE_ENVIRONMENTAL_SENSING {
                         environmental_sensing = true;
-                    } else if s.as_str() == BLE_GATT_SERVICE_WEATHERSTATION.s {
+                    } else if s.as_str() == BLE_GATT_SERVICE_WEATHERSTATION {
                         weatherstation = true;
                     }
                 }
