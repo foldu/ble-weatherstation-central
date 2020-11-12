@@ -21,9 +21,20 @@ ul {
 .sensor .no-label {
     color: gray;
 }
-.sensor > .sensor-values {
+.sensor .sensor-values {
     display: grid;
     grid-template-rows: 1fr 1fr 1fr;
+}
+
+.sensor .sensor-display {
+    display: grid;
+    grid-template-columns: 1fr 3fr;
+}
+
+.sensor .chart {
+    min-width: 200px;
+    min-height: 200px;
+    border: solid 1px black;
 }
 
 .addr-row {

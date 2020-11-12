@@ -27,11 +27,16 @@
                 </div>
                 {% match entry.state %}
                 {% when SensorState::Connected with (v) %}
-                <ul class="values sensor-values">
-                    <li class="temperature">{{ v.temperature }}</li>
-                    <li class="pressure">{{ v.pressure }}</li>
-                    <li class="humidity">{{ v.humidity }}</li>
-                </ul>
+                <div class="sensor-display">
+                    <ul class="values sensor-values">
+                        <li class="temperature">{{ v.temperature }}</li>
+                        <li class="pressure">{{ v.pressure }}</li>
+                        <li class="humidity">{{ v.humidity }}</li>
+                    </ul>
+                    <div class="chart">
+                        Chart goes here
+                    </div>
+                </div>
                 {% when SensorState::Unconnected %}
                 <div class="values">Not connected</div>
                 {% endmatch %}
