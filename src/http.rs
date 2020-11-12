@@ -5,11 +5,21 @@ use std::{future::Future, net::SocketAddr};
 use warp::Filter;
 
 // TODO: add error handling after warp 0.3
+#[macro_use]
+macro_rules! static_file {
+    ($content_type:expr, $path:literal) => {{
+        const BIN: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/static/", $path));
+        warp::http::Response::builder()
+            .header("Content-Type", $content_type)
+            .status(warp::http::StatusCode::OK)
+            .body(BIN)
+    }};
+}
 
 pub(crate) fn serve(
     ctx: super::Context,
     addr: SocketAddr,
-    shutdown: impl Future<Output = ()> + Send + Sync + 'static,
+    shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> (std::net::SocketAddr, impl warp::Future) {
     let ctx = warp::any().map({
         let ctx = ctx.clone();
@@ -28,7 +38,7 @@ pub(crate) fn serve(
         .and_then(change_label);
 
     let forget = warp::delete()
-        .and(warp::path!("api" / "delete"))
+        .and(warp::path!("api" / "forget"))
         .and(ctx.clone())
         .and(warp::filters::body::json())
         .and_then(forget);
@@ -40,14 +50,28 @@ pub(crate) fn serve(
 
     let script = warp::get()
         .and(warp::path!("static" / "script.js"))
-        .map(|| {
-            warp::reply::with_status(
-                include_str!("../templates/script.js"),
-                warp::http::StatusCode::OK,
-            )
-        });
+        .map(|| static_file!("application/javascript", "script.js"));
 
-    let routes = home.or(change_label).or(get_state).or(forget).or(script);
+    let css = warp::get()
+        .and(warp::path!("static" / "style.css"))
+        .map(|| static_file!("text/css", "style.css"));
+
+    let pure = warp::get()
+        .and(warp::path!("static" / "pure-min.css"))
+        .map(|| static_file!("text/css", "pure-min.css"));
+
+    let cors = warp::cors()
+        .allow_methods(vec!["GET", "PUT", "DELETE", "HEAD"])
+        .build();
+
+    let routes = home
+        .or(change_label)
+        .or(get_state)
+        .or(forget)
+        .or(script)
+        .or(css)
+        .or(pure)
+        .with(cors);
 
     warp::serve(routes).bind_with_graceful_shutdown(addr, shutdown)
 }

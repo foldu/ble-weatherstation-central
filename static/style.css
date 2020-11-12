@@ -1,0 +1,33 @@
+ul {
+    list-style-type: none;
+    margin-top: 0px;
+    margin-bottom: 0px;
+    padding-left: 0px;
+}
+
+.sensor-list {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    margin: 10px;
+}
+
+.sensor {
+    border: 1px solid black;
+    border-radius: 5px;
+    margin: 5px;
+    padding: 5px;
+}
+
+.sensor .no-label {
+    color: gray;
+}
+.sensor > .sensor-values {
+    display: grid;
+    grid-template-rows: 1fr 1fr 1fr;
+}
+
+.addr-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    font-size: 1em;
+}
