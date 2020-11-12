@@ -4,6 +4,7 @@ use std::{
     fmt::{self, Display},
 };
 
+/// Temperature with a precision of 2
 #[derive(Copy, Clone, Debug, Serialize)]
 pub(crate) struct Celsius(i16);
 
@@ -29,6 +30,7 @@ impl Display for Celsius {
     }
 }
 
+/// Humidity with a precision of 2 in percent
 #[derive(Copy, Clone, Debug, Serialize)]
 pub(crate) struct RelativeHumidity(u16);
 
@@ -53,6 +55,7 @@ impl TryFrom<u16> for RelativeHumidity {
     }
 }
 
+/// Pressure in with a precision of 1
 #[derive(Copy, Clone, Debug, Serialize)]
 pub(crate) struct Pascal(u32);
 
@@ -64,7 +67,7 @@ impl From<u32> for Pascal {
 
 impl Display for Pascal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}Pa", self.0)
+        write!(f, "{}.{:0>1}Pa", self.0 / 10, self.0 % 10)
     }
 }
 

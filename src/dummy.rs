@@ -17,8 +17,7 @@ impl Default for FluctuatingSensor {
     fn default() -> Self {
         Self {
             humidity: 50_00,
-            // TODO: better default for pressure
-            pressure: 100000,
+            pressure: 1_000_000_0,
             temperature: 20_00,
         }
     }
@@ -50,8 +49,8 @@ impl Iterator for FluctuatingSensor {
             } else {
                 self.pressure - rng.gen_range(100, 1000)
             },
-            10000,
-            100000,
+            900_000_0,
+            1_100_000_0,
         );
         self.humidity = clamp(
             if rng.gen::<bool>() {
