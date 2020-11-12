@@ -132,6 +132,7 @@ async fn forget(
     ctx: super::Context,
     req: Forget,
 ) -> Result<impl warp::Reply, std::convert::Infallible> {
+    ctx.sensors.write().await.remove(&req.addr);
     let mut txn = ctx.db.write_txn().unwrap();
     ctx.db.delete_addr(&mut txn, req.addr).unwrap();
     txn.commit().unwrap();
