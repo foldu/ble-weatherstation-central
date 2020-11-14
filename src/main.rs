@@ -72,7 +72,7 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
 async fn update_task(
     ctx: Context,
     mut updates: impl Stream<Item = BTreeMap<BluetoothAddress, SensorState>> + Unpin,
-) -> Result<(), heed::Error> {
+) -> Result<(), db::Error> {
     while let Some(update) = updates.next().await {
         let mut new_sensors = Vec::new();
         {
@@ -128,13 +128,6 @@ impl Context {
                     .join(concat!(env!("CARGO_PKG_NAME"), ".mdb"))
             }
         };
-
-        std::fs::create_dir_all(&db_path).with_context(|| {
-            format!(
-                "Failed creating database directory in {}",
-                db_path.display()
-            )
-        })?;
 
         let db = db::Db::open(&db_path)
             .with_context(|| format!("Opening database in {}", db_path.display()))?;

@@ -2,9 +2,10 @@ mod templates;
 
 use crate::{bluetooth::BluetoothAddress, db::AddrDbEntry};
 use std::{future::Future, net::SocketAddr};
-use warp::Filter;
+use warp::{http::StatusCode, Filter};
 
-// TODO: add error handling after warp 0.3
+// TODO: add better error handling after warp 0.3
+
 #[macro_use]
 macro_rules! static_file {
     ($content_type:expr, $path:literal) => {{
@@ -71,17 +72,43 @@ pub(crate) fn serve(
         .or(script)
         .or(css)
         .or(pure)
-        .with(cors);
+        .with(cors)
+        // TODO: split into html rejection replies and json api rejection replies
+        .recover(handle_rejection);
 
     warp::serve(routes).bind_with_graceful_shutdown(addr, shutdown)
 }
 
-async fn show_sensors(ctx: super::Context) -> Result<impl warp::Reply, std::convert::Infallible> {
+async fn handle_rejection(
+    rejection: warp::Rejection,
+) -> Result<impl warp::Reply, std::convert::Infallible> {
+    let response = warp::http::Response::builder();
+    let reply = |code: StatusCode| {
+        response
+            .status(code)
+            .body(askama::Template::render(&templates::Error::new(code)).unwrap())
+            .unwrap()
+    };
+
+    if let Some(db_error) = rejection.find::<crate::db::Error>() {
+        let e: &dyn std::error::Error = db_error;
+        tracing::error!(e);
+        Ok(reply(StatusCode::INTERNAL_SERVER_ERROR))
+    } else if rejection.is_not_found() {
+        Ok(reply(StatusCode::NOT_FOUND))
+    } else {
+        tracing::error!("Unhandled rejection {:?}", rejection);
+        // FIXME:
+        Ok(reply(StatusCode::IM_A_TEAPOT))
+    }
+}
+
+async fn show_sensors(ctx: super::Context) -> Result<impl warp::Reply, warp::Rejection> {
     let sensors = ctx.sensors.read().await;
     let mut display = Vec::with_capacity(sensors.len());
-    let txn = ctx.db.read_txn().unwrap();
+    let txn = ctx.db.read_txn()?;
     for (addr, state) in sensors.iter() {
-        let label = match ctx.db.get_addr(&txn, *addr).unwrap() {
+        let label = match ctx.db.get_addr(&txn, *addr)? {
             Some(entry) => entry.label,
             None => None,
         };
@@ -106,21 +133,15 @@ struct ChangeLabel {
 async fn change_label(
     ctx: super::Context,
     req: ChangeLabel,
-) -> Result<impl warp::Reply, std::convert::Infallible> {
-    let mut txn = ctx.db.write_txn().unwrap();
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let mut txn = ctx.db.write_txn()?;
     let entry = AddrDbEntry {
         label: req.new_label,
     };
-    ctx.db.put_addr(&mut txn, req.addr, &entry).unwrap();
-    //if ctx.db.get_addr(&txn, req.addr).unwrap().is_some() {
-    //    let entry = AddrDbEntry {
-    //        label: req.new_label,
-    //    };
-    //    ctx.db.put_addr(&mut txn, req.addr, &entry).unwrap();
-    //}
-    txn.commit().unwrap();
+    ctx.db.put_addr(&mut txn, req.addr, &entry)?;
+    txn.commit().map_err(crate::db::Error::Heed)?;
 
-    Ok(warp::reply::with_status("", warp::http::StatusCode::OK))
+    Ok(warp::reply::with_status("", StatusCode::OK))
 }
 
 #[derive(serde::Deserialize)]
@@ -128,39 +149,36 @@ struct Forget {
     addr: BluetoothAddress,
 }
 
-async fn forget(
-    ctx: super::Context,
-    req: Forget,
-) -> Result<impl warp::Reply, std::convert::Infallible> {
+async fn forget(ctx: super::Context, req: Forget) -> Result<impl warp::Reply, warp::Rejection> {
     ctx.sensors.write().await.remove(&req.addr);
-    let mut txn = ctx.db.write_txn().unwrap();
-    ctx.db.delete_addr(&mut txn, req.addr).unwrap();
-    txn.commit().unwrap();
-    Ok(warp::reply::with_status("", warp::http::StatusCode::OK))
+    let mut txn = ctx.db.write_txn()?;
+    ctx.db.delete_addr(&mut txn, req.addr)?;
+    txn.commit().map_err(crate::db::Error::Heed)?;
+    Ok(warp::reply::with_status("", StatusCode::OK))
 }
 
-async fn get_state(ctx: super::Context) -> Result<impl warp::Reply, std::convert::Infallible> {
+async fn get_state(ctx: super::Context) -> Result<impl warp::Reply, warp::Rejection> {
     let sensors = ctx.sensors.read().await;
     #[derive(serde::Serialize)]
     struct ReplyEntry {
         state: crate::sensor::SensorState,
         label: Option<String>,
     }
-    let txn = ctx.db.read_txn().unwrap();
+    let txn = ctx.db.read_txn()?;
 
     let reply = sensors
         .iter()
         .map(|(addr, state)| {
-            let db_entry = ctx.db.get_addr(&txn, *addr).unwrap();
-            (
+            let db_entry = ctx.db.get_addr(&txn, *addr)?;
+            Ok((
                 addr,
                 ReplyEntry {
                     state: *state,
                     label: db_entry.and_then(|entry| entry.label),
                 },
-            )
+            ))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, crate::db::Error>>()?;
 
     Ok(warp::reply::json(&reply))
 }

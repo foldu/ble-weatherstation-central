@@ -1,7 +1,8 @@
 use crate::{bluetooth::BluetoothAddress, sensor::SensorState};
 use askama::Template;
+use derive_more::Constructor;
 
-#[derive(Template)]
+#[derive(Template, Constructor)]
 #[template(path = "home.html")]
 pub(crate) struct Home<'a> {
     sensors: &'a Vec<(BluetoothAddress, SensorEntry)>,
@@ -13,8 +14,8 @@ pub(crate) struct SensorEntry {
     pub(crate) label: Option<String>,
 }
 
-impl<'a> Home<'a> {
-    pub(crate) fn new(sensors: &'a Vec<(BluetoothAddress, SensorEntry)>) -> Self {
-        Self { sensors }
-    }
+#[derive(Debug, Constructor, Template)]
+#[template(path = "error.html")]
+pub(crate) struct Error {
+    code: warp::http::StatusCode,
 }
