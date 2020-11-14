@@ -2,7 +2,7 @@ mod templates;
 
 use crate::{bluetooth::BluetoothAddress, db::AddrDbEntry};
 use std::{future::Future, net::SocketAddr};
-use warp::{http::StatusCode, Filter};
+use warp::{http::StatusCode, reject, Filter};
 
 // TODO: add better error handling after warp 0.3
 
@@ -96,6 +96,8 @@ async fn handle_rejection(
         Ok(reply(StatusCode::INTERNAL_SERVER_ERROR))
     } else if rejection.is_not_found() {
         Ok(reply(StatusCode::NOT_FOUND))
+    } else if let Some(_) = rejection.find::<reject::MethodNotAllowed>() {
+        Ok(reply(StatusCode::METHOD_NOT_ALLOWED))
     } else {
         tracing::error!("Unhandled rejection {:?}", rejection);
         // FIXME:
