@@ -22,10 +22,15 @@ const REALTIME_CLOCK: ClockId = ClockId::CLOCK_REALTIME;
 
 impl Timestamp {
     pub const UNIX_EPOCH: Timestamp = Timestamp(0);
+    pub const ONE_DAY: Timestamp = Timestamp(60 * 60 * 24);
 
     pub fn now() -> Self {
         // as u32 only causes problems after Sun 07 Feb 2106 07:28:15 AM CET
         // but I guess this won't be used after that
         Self(clock_gettime(REALTIME_CLOCK).unwrap().tv_sec() as u32)
+    }
+
+    pub fn bottoming_sub(self, rhs: Self) -> Self {
+        Self(self.0.checked_sub(rhs.0).unwrap_or(0))
     }
 }

@@ -54,6 +54,7 @@ pub(crate) fn serve(
     let log = warp::get()
         .and(warp::path!("api" / "log"))
         .and(ctx.clone())
+        .and(warp::query())
         .and_then(get_log);
 
     let script = warp::get()
@@ -193,13 +194,20 @@ async fn get_state(ctx: super::Context) -> Result<impl warp::Reply, warp::Reject
     Ok(warp::reply::json(&reply))
 }
 
-async fn get_log(ctx: super::Context) -> Result<impl warp::Reply, warp::Rejection> {
+#[derive(serde::Deserialize)]
+struct LogQuery {
+    addr: BluetoothAddress,
+}
+
+async fn get_log(
+    ctx: super::Context,
+    query: LogQuery,
+) -> Result<impl warp::Reply, warp::Rejection> {
     let txn = ctx.db.read_txn()?;
-    let log = ctx.db.get_log(
-        &txn,
-        BluetoothAddress::from(0),
-        Timestamp::UNIX_EPOCH..Timestamp::now(),
-    )?;
+    let now = Timestamp::now();
+    let start = now.bottoming_sub(Timestamp::ONE_DAY);
+
+    let log = ctx.db.get_log(&txn, query.addr, start..now)?;
 
     #[derive(serde::Serialize)]
     struct Entry {
