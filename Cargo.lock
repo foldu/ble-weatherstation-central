@@ -122,6 +122,7 @@ dependencies = [
  "flume",
  "futures-util",
  "heed",
+ "nix 0.19.0",
  "rand",
  "serde",
  "serde_json",
@@ -883,6 +884,18 @@ dependencies = [
  "cfg-if 0.1.10",
  "libc",
  "void",
+]
+
+[[package]]
+name = "nix"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85db2feff6bf70ebc3a4793191517d5f0331100a2f10f9bf93b5e5214f32b7b7"
+dependencies = [
+ "bitflags",
+ "cc",
+ "cfg-if 0.1.10",
+ "libc",
 ]
 
 [[package]]
@@ -1726,7 +1739,7 @@ dependencies = [
  "derivative",
  "enumflags2",
  "fastrand",
- "nix",
+ "nix 0.17.0",
  "once_cell",
  "scoped-tls",
  "serde",

@@ -4,7 +4,10 @@ use serde::{
 };
 use std::fmt;
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
+#[repr(transparent)]
+#[derive(
+    Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug, zerocopy::FromBytes, zerocopy::AsBytes,
+)]
 pub struct BluetoothAddress(u64);
 
 const EXAMPLE_BLUETOOTH_ADDR: &str = "00:11:22:33:FF:EE";

@@ -4,6 +4,7 @@ mod dummy;
 mod http;
 mod opt;
 mod sensor;
+mod timestamp;
 
 use crate::{bluetooth::BluetoothAddress, dummy::dummy_sensor, opt::Opt};
 use clap::Clap;
@@ -15,7 +16,8 @@ use futures_util::{
     StreamExt,
 };
 use sensor::SensorState;
-use std::{collections::BTreeMap, net::SocketAddr, sync::Arc};
+use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
+use timestamp::Timestamp;
 use tokio::{signal::unix, sync::RwLock, task};
 use unix::SignalKind;
 
@@ -73,29 +75,49 @@ async fn update_task(
     ctx: Context,
     mut updates: impl Stream<Item = BTreeMap<BluetoothAddress, SensorState>> + Unpin,
 ) -> Result<(), db::Error> {
-    while let Some(update) = updates.next().await {
-        let mut new_sensors = Vec::new();
-        {
-            let txn = ctx.db.read_txn()?;
-            for &addr in update.keys() {
-                if ctx.db.get_addr(&txn, addr)?.is_none() {
-                    new_sensors.push(addr);
-                    tracing::info!("Memorized new sensor {}", addr);
+    let mut interval = tokio::time::interval(Duration::from_secs(1 * 60));
+    loop {
+        // TODO: make both arms a function
+        tokio::select! {
+            _ = interval.next() => {
+                let sensors = ctx.sensors.read().await;
+                let now = Timestamp::now();
+                let mut txn  = ctx.db.log_txn()?;
+                for (addr, state) in &*sensors {
+                    if let SensorState::Connected(values) = state {
+                        txn.log(*addr, now, *values)?;
+                    }
+                }
+                txn.commit()?;
+            }
+            update = updates.next() => {
+                match update {
+                    Some(update) => {
+                        let mut new_sensors = Vec::new();
+                        {
+                            let txn = ctx.db.read_txn()?;
+                            for &addr in update.keys() {
+                                if ctx.db.get_addr(&txn, addr)?.is_none() {
+                                    new_sensors.push(addr);
+                                    tracing::info!("Memorized new sensor {}", addr);
+                                }
+                            }
+                        }
+                        if !new_sensors.is_empty() {
+                            let mut txn = ctx.db.write_txn()?;
+                            for addr in new_sensors {
+                                ctx.db.put_addr(&mut txn, addr, &AddrDbEntry::default())?;
+                            }
+                            txn.commit()?;
+                        }
+
+                        ctx.sensors.write().await.extend(update);
+                    }
+                    None => break Ok(()),
                 }
             }
         }
-        if !new_sensors.is_empty() {
-            let mut txn = ctx.db.write_txn()?;
-            for addr in new_sensors {
-                ctx.db.put_addr(&mut txn, addr, &AddrDbEntry::default())?;
-            }
-            txn.commit()?;
-        }
-
-        ctx.sensors.write().await.extend(update);
     }
-
-    Ok(())
 }
 
 fn main() -> Result<(), eyre::Error> {

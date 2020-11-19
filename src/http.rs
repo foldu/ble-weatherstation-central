@@ -1,6 +1,8 @@
 mod templates;
 
-use crate::{bluetooth::BluetoothAddress, db::AddrDbEntry};
+use crate::{
+    bluetooth::BluetoothAddress, db::AddrDbEntry, sensor::SensorValues, timestamp::Timestamp,
+};
 use std::{future::Future, net::SocketAddr};
 use warp::{http::StatusCode, reject, Filter};
 
@@ -49,6 +51,11 @@ pub(crate) fn serve(
         .and(ctx.clone())
         .and_then(get_state);
 
+    let log = warp::get()
+        .and(warp::path!("api" / "log"))
+        .and(ctx.clone())
+        .and_then(get_log);
+
     let script = warp::get()
         .and(warp::path!("static" / "script.js"))
         .map(|| static_file!("application/javascript", "script.js"));
@@ -70,6 +77,7 @@ pub(crate) fn serve(
         .or(get_state)
         .or(forget)
         .or(script)
+        .or(log)
         .or(css)
         .or(pure)
         .with(cors)
@@ -141,7 +149,7 @@ async fn change_label(
         label: req.new_label,
     };
     ctx.db.put_addr(&mut txn, req.addr, &entry)?;
-    txn.commit().map_err(crate::db::Error::Heed)?;
+    txn.commit()?;
 
     Ok(warp::reply::with_status("", StatusCode::OK))
 }
@@ -155,7 +163,7 @@ async fn forget(ctx: super::Context, req: Forget) -> Result<impl warp::Reply, wa
     ctx.sensors.write().await.remove(&req.addr);
     let mut txn = ctx.db.write_txn()?;
     ctx.db.delete_addr(&mut txn, req.addr)?;
-    txn.commit().map_err(crate::db::Error::Heed)?;
+    txn.commit()?;
     Ok(warp::reply::with_status("", StatusCode::OK))
 }
 
@@ -183,4 +191,26 @@ async fn get_state(ctx: super::Context) -> Result<impl warp::Reply, warp::Reject
         .collect::<Result<Vec<_>, crate::db::Error>>()?;
 
     Ok(warp::reply::json(&reply))
+}
+
+async fn get_log(ctx: super::Context) -> Result<impl warp::Reply, warp::Rejection> {
+    let txn = ctx.db.read_txn()?;
+    let log = ctx.db.get_log(
+        &txn,
+        BluetoothAddress::from(0),
+        Timestamp::UNIX_EPOCH..Timestamp::now(),
+    )?;
+
+    #[derive(serde::Serialize)]
+    struct Entry {
+        time: Timestamp,
+        values: SensorValues,
+    }
+
+    Ok(warp::reply::json(
+        &log.unwrap()
+            .into_iter()
+            .map(|(time, values)| Entry { time, values })
+            .collect::<Vec<_>>(),
+    ))
 }

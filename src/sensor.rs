@@ -95,6 +95,36 @@ pub(crate) enum SensorState {
     Unconnected,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, zerocopy::FromBytes, zerocopy::AsBytes)]
+pub(crate) struct RawSensorValues {
+    pub(crate) temperature: i16,
+    pub(crate) humidity: u16,
+    pub(crate) pressure: u32,
+}
+
+impl From<SensorValues> for RawSensorValues {
+    fn from(values: SensorValues) -> Self {
+        Self {
+            temperature: values.temperature.0,
+            pressure: values.pressure.0,
+            humidity: values.humidity.0,
+        }
+    }
+}
+
+impl TryFrom<RawSensorValues> for SensorValues {
+    type Error = eyre::Error;
+
+    fn try_from(value: RawSensorValues) -> Result<Self, Self::Error> {
+        Ok(Self {
+            temperature: Celsius::try_from(value.temperature)?,
+            pressure: Pascal::from(value.pressure),
+            humidity: RelativeHumidity::try_from(value.humidity)?,
+        })
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
