@@ -19,3 +19,9 @@ pub(crate) struct SensorEntry {
 pub(crate) struct Error {
     code: warp::http::StatusCode,
 }
+
+#[derive(Debug, Constructor, Template)]
+#[template(path = "detail.html")]
+pub(crate) struct Detail {
+    pub(crate) addr: BluetoothAddress,
+}

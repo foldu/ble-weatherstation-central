@@ -11,7 +11,11 @@ use warp::{http::StatusCode, reject, Filter};
 #[macro_use]
 macro_rules! static_file {
     ($content_type:expr, $path:literal) => {{
-        const BIN: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/static/", $path));
+        const BIN: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/frontend/dist/",
+            $path
+        ));
         warp::http::Response::builder()
             .header("Content-Type", $content_type)
             .status(warp::http::StatusCode::OK)
@@ -51,23 +55,23 @@ pub(crate) fn serve(
         .and(ctx.clone())
         .and_then(get_state);
 
-    let log = warp::get()
-        .and(warp::path!("api" / "log"))
+    let api_log = warp::get()
         .and(ctx.clone())
-        .and(warp::query())
+        .and(warp::path!("api" / "log" / BluetoothAddress))
         .and_then(get_log);
+
+    let detail = warp::get()
+        .and(ctx.clone())
+        .and(warp::path!("detail" / BluetoothAddress))
+        .and_then(detail);
 
     let script = warp::get()
         .and(warp::path!("static" / "script.js"))
-        .map(|| static_file!("application/javascript", "script.js"));
+        .map(|| static_file!("application/javascript", "main.bundle.js"));
 
     let css = warp::get()
         .and(warp::path!("static" / "style.css"))
-        .map(|| static_file!("text/css", "style.css"));
-
-    let pure = warp::get()
-        .and(warp::path!("static" / "pure-min.css"))
-        .map(|| static_file!("text/css", "pure-min.css"));
+        .map(|| static_file!("text/css", "main.css"));
 
     let cors = warp::cors()
         .allow_methods(vec!["GET", "PUT", "DELETE", "HEAD"])
@@ -78,9 +82,9 @@ pub(crate) fn serve(
         .or(get_state)
         .or(forget)
         .or(script)
-        .or(log)
+        .or(api_log)
         .or(css)
-        .or(pure)
+        .or(detail)
         .with(cors)
         // TODO: split into html rejection replies and json api rejection replies
         .recover(handle_rejection);
@@ -194,20 +198,16 @@ async fn get_state(ctx: super::Context) -> Result<impl warp::Reply, warp::Reject
     Ok(warp::reply::json(&reply))
 }
 
-#[derive(serde::Deserialize)]
-struct LogQuery {
-    addr: BluetoothAddress,
-}
-
 async fn get_log(
     ctx: super::Context,
-    query: LogQuery,
+    addr: BluetoothAddress,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let txn = ctx.db.read_txn()?;
     let now = Timestamp::now();
     let start = now.bottoming_sub(Timestamp::ONE_DAY);
+    println!("{:?} {:?}", now, start);
 
-    let log = ctx.db.get_log(&txn, query.addr, start..now)?;
+    let log = ctx.db.get_log(&txn, addr, start..now)?.unwrap();
 
     #[derive(serde::Serialize)]
     struct Entry {
@@ -216,9 +216,16 @@ async fn get_log(
     }
 
     Ok(warp::reply::json(
-        &log.unwrap()
-            .into_iter()
+        &log.into_iter()
             .map(|(time, values)| Entry { time, values })
             .collect::<Vec<_>>(),
     ))
+}
+
+async fn detail(
+    ctx: super::Context,
+    sensor: BluetoothAddress,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    tracing::info!("Detail for {}", sensor);
+    Ok(askama_warp::reply(&templates::Detail::new(sensor), "html"))
 }

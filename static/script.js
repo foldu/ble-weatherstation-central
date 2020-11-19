@@ -34,27 +34,28 @@ function displayError(e) {
     alert(e);
 }
 
-
-window.addEventListener("load", () => {
-    for (const sensor of document.querySelectorAll(".sensor")) {
-        const addr = sensor.querySelector(".addr").textContent.trim();
-        const labelNode = sensor.querySelector(".label");
-        const label = labelNode.textContent.trim();
-        labelNode.addEventListener("click", async () => {
-            const newLabel = await inputModal(`Change label for ${addr}`, label);
-            if (newLabel !== null) {
-                oneshotChange("PUT", "/api/change_label", "Could not change label", {
-                    addr,
-                    new_label: newLabel,
-                });
-            }
-        });
-        sensor.querySelector(".forget").addEventListener("click", async () => {
-            if (await confirmModal(`Are you sure you want to forget sensor ${addr}?`)) {
-                oneshotChange("DELETE", "/api/forget", `Failed deleting ${addr}`, {
-                    addr,
-                });
-            }
-        });
-    }
-});
+function overview() {
+    window.addEventListener("load", () => {
+        for (const sensor of document.querySelectorAll(".sensor")) {
+            const addr = sensor.querySelector(".addr").textContent.trim();
+            const labelNode = sensor.querySelector(".label");
+            const label = labelNode.textContent.trim();
+            labelNode.addEventListener("click", async () => {
+                const newLabel = await inputModal(`Change label for ${addr}`, label);
+                if (newLabel !== null) {
+                    oneshotChange("PUT", "/api/change_label", "Could not change label", {
+                        addr,
+                        new_label: newLabel,
+                    });
+                }
+            });
+            sensor.querySelector(".forget").addEventListener("click", async () => {
+                if (await confirmModal(`Are you sure you want to forget sensor ${addr}?`)) {
+                    oneshotChange("DELETE", "/api/forget", `Failed deleting ${addr}`, {
+                        addr,
+                    });
+                }
+            });
+        }
+    });
+}

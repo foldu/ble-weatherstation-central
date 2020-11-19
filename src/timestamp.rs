@@ -11,6 +11,7 @@ use nix::time::{clock_gettime, ClockId};
     zerocopy::FromBytes,
     zerocopy::AsBytes,
     serde::Serialize,
+    Debug,
 )]
 pub(crate) struct Timestamp(u32);
 

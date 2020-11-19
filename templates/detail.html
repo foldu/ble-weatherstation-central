@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>Weatherstation Central</title>
+        <script src="/static/script.js"></script>
+        <link rel="stylesheet" type="text/css" href="/static/style.css" />
+    </head>
+    <body id="detail">
+        <div hidden class="addr">{{ addr }}</div>
+        <nav class="pure-menu pure-menu-horizontal">
+            <ul class="pure-menu-list">
+                <li class="pure-menu-list">
+                    <a class="pure-menu-link" href="/">Overview</a>
+                </li>                
+            </ul> 
+        </nav>
+        <div class="pure-menu pure-menu-horizontal">
+            <ul class="pure-menu-list">
+                <li class="pure-menu-item pure-menu-link pure-menu-selected">Temperature</li>
+                <li class="pure-menu-item pure-menu-link">Relative humidity</li>
+                <li class="pure-menu-item pure-menu-link">Pressure</li>
+            </ul>
+        </div>
+        <canvas id="chart"></canvas>
+    </body>
+</html>

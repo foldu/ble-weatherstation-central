@@ -4,10 +4,9 @@
         <meta charset="utf-8">
         <title>Weatherstation Central</title>
         <script async src="/static/script.js"></script>
-        <link rel="stylesheet" type="text/css" href="/static/pure-min.css" />
         <link rel="stylesheet" type="text/css" href="/static/style.css" />
     </head>
-    <body>
+    <body id="overview">
         <ul class="sensor-list">
             {% for (addr, entry) in sensors %}
             <li class="sensor">
@@ -33,15 +32,17 @@
                         <li class="pressure">{{ v.pressure }}</li>
                         <li class="humidity">{{ v.humidity }}</li>
                     </ul>
-                    <div class="chart">
-                        Chart goes here
-                    </div>
+                    <a class="chart" href="/detail/{{ addr }}"></a>
                 </div>
                 {% when SensorState::Unconnected %}
-                <div class="values">Not connected</div>
+                <div class="values"><a href="/detail/{{ addr }}">Not connected</a></div>
                 {% endmatch %}
             </li>
             {% endfor %}
         </ul>
+        <!-- FIXME: this sucks -->
+        <script type="text/javascript">
+            overview();
+        </script>
     </body>
 </html>
