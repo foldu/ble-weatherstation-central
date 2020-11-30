@@ -4,7 +4,9 @@ use crate::{
     timestamp::Timestamp,
 };
 use heed::{
+    byteorder::BigEndian,
     types::{OwnedType, SerdeBincode},
+    zerocopy::U32,
     RoTxn,
 };
 use std::{
@@ -12,13 +14,15 @@ use std::{
     collections::BTreeMap,
     convert::TryFrom,
     fs,
-    ops::Range,
+    ops::{Range, RangeBounds},
     path::{Path, PathBuf},
     sync::{RwLock, RwLockReadGuard},
 };
 
+type BEU32 = U32<BigEndian>;
+
 type LogDb =
-    BTreeMap<BluetoothAddress, heed::Database<OwnedType<Timestamp>, OwnedType<RawSensorValues>>>;
+    BTreeMap<BluetoothAddress, heed::Database<OwnedType<BEU32>, OwnedType<RawSensorValues>>>;
 
 pub(crate) struct Db {
     env: heed::Env,
@@ -69,7 +73,11 @@ impl<'a> LogTransaction<'a> {
         values: SensorValues,
     ) -> Result<(), heed::Error> {
         if let Some(db) = self.sensor_values.get(&addr) {
-            db.put(self.txn.inner_mut(), &timestamp, &values.into())?;
+            db.put(
+                self.txn.inner_mut(),
+                &BEU32::new(timestamp.as_u32()),
+                &values.into(),
+            )?;
         }
         Ok(())
     }
@@ -184,11 +192,13 @@ impl Db {
             _ => return Ok(None),
         };
 
+        let range = BEU32::new(range.start.as_u32())..BEU32::new(range.end.as_u32());
+
         let mut ret = Vec::new();
         for val in db.range(txn, &range)? {
             let (time, values) = val?;
             if let Ok(values) = SensorValues::try_from(values) {
-                ret.push((time, values));
+                ret.push((Timestamp::from(time.get()), values));
             }
         }
 

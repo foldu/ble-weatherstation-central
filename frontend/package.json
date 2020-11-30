@@ -7,6 +7,8 @@
         "build": "webpack"
     },
     "dependencies": {
+        "@types/mithril": "^2.0.6",
+        "mithril": "^2.0.4",
         "moment": "^2.29.1"
     },
     "devDependencies": {

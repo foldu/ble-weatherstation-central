@@ -205,7 +205,6 @@ async fn get_log(
     let txn = ctx.db.read_txn()?;
     let now = Timestamp::now();
     let start = now.bottoming_sub(Timestamp::ONE_DAY);
-    println!("{:?} {:?}", now, start);
 
     let log = ctx.db.get_log(&txn, addr, start..now)?.unwrap();
 

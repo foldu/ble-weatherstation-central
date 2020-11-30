@@ -2,16 +2,7 @@ use nix::time::{clock_gettime, ClockId};
 
 #[repr(transparent)]
 #[derive(
-    Ord,
-    PartialOrd,
-    Eq,
-    PartialEq,
-    Copy,
-    Clone,
-    zerocopy::FromBytes,
-    zerocopy::AsBytes,
-    serde::Serialize,
-    Debug,
+    Ord, PartialOrd, Eq, PartialEq, Copy, Clone, serde::Serialize, Debug, derive_more::From,
 )]
 pub(crate) struct Timestamp(u32);
 
@@ -33,5 +24,9 @@ impl Timestamp {
 
     pub fn bottoming_sub(self, rhs: Self) -> Self {
         Self(self.0.checked_sub(rhs.0).unwrap_or(0))
+    }
+
+    pub fn as_u32(self) -> u32 {
+        self.0
     }
 }
