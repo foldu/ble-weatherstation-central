@@ -136,7 +136,8 @@ async fn show_sensors(ctx: super::Context) -> Result<impl warp::Reply, warp::Rej
         ))
     }
 
-    Ok(askama_warp::reply(&templates::Home::new(&display), "html"))
+    let rendered = askama::Template::render(&templates::Home::new(&display)).unwrap();
+    Ok(warp::reply::with_status(rendered, StatusCode::OK))
 }
 
 #[derive(serde::Deserialize)]
@@ -226,5 +227,6 @@ async fn detail(
     sensor: BluetoothAddress,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     tracing::info!("Detail for {}", sensor);
-    Ok(askama_warp::reply(&templates::Detail::new(sensor), "html"))
+    let rendered = askama::Template::render(&templates::Detail::new(sensor)).unwrap();
+    Ok(warp::reply::with_status(rendered, StatusCode::OK))
 }

@@ -75,7 +75,7 @@ pub(crate) fn dummy_sensor(
     impl Future<Output = ()>,
     impl Stream<Item = BTreeMap<BluetoothAddress, SensorState>> + Sync + Send,
 ) {
-    let (mut tx, rx) = mpsc::channel(1);
+    let (tx, rx) = mpsc::channel(1);
     let dummy_task = async move {
         let mut map = BTreeMap::new();
 
@@ -84,7 +84,7 @@ pub(crate) fn dummy_sensor(
             if let Err(_) = tx.send(map.clone()).await {
                 break;
             }
-            tokio::time::delay_for(Duration::from_secs(30)).await;
+            tokio::time::sleep(Duration::from_secs(30)).await;
         }
     };
 

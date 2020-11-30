@@ -9,8 +9,7 @@ license = "Unlicense OR MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-askama = { version = "0.10.3", features = ["with-warp"] }
-askama_warp = "0.10.0"
+askama = "0.10.3"
 bitflags = "1.2.1"
 byteorder = "1.3.4"
 clap = "3.0.0-beta.2"
@@ -25,10 +24,10 @@ rand = "0.7.3"
 serde = { version = "1.0.117", features = ["derive"] }
 serde_json = "1.0.59"
 thiserror = "1.0.22"
-tokio = { version = "0.2.22", features = ["rt-threaded", "sync", "time", "signal", "macros"] }
+tokio = { version = "0.3.0", features = ["rt-multi-thread", "sync", "time", "signal", "macros", "net"] }
 tracing = "0.1.21"
 tracing-subscriber = { version = "0.2.15", default-features = false, features = ["smallvec", "chrono", "fmt", "ansi"] }
-warp = { version =  "0.2.5", default-features = false }
+warp = { git = "https://github.com/aknuds1/warp", default-features = false, rev = "fc71e963c6cb88bc5e85802febbec343e93e606a" }
 zbus = { git = "https://gitlab.freedesktop.org/zeenix/zbus", rev = "d9bfcab6327a1f2e71abdd1e9a560189efcc84bd" }
 zerocopy = "0.3.0"
 zvariant = { git = "https://gitlab.freedesktop.org/zeenix/zbus", rev = "d9bfcab6327a1f2e71abdd1e9a560189efcc84bd" }

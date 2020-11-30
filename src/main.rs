@@ -127,9 +127,8 @@ fn main() -> Result<(), eyre::Error> {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    let mut rt = tokio::runtime::Builder::new()
-        .threaded_scheduler()
-        .core_threads(2)
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()?;
 

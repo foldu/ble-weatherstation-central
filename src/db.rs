@@ -222,9 +222,3 @@ pub(crate) enum Error {
 }
 
 impl warp::reject::Reject for Error {}
-
-impl From<Error> for warp::Rejection {
-    fn from(e: Error) -> Self {
-        warp::reject::custom(e)
-    }
-}
