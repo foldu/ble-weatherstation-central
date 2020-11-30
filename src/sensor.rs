@@ -163,6 +163,6 @@ mod test {
 
     #[test]
     fn pascal_display() {
-        assert_eq!(Pascal::from(1000).to_string(), "1000Pa".to_string())
+        assert_eq!(Pascal::from(1000).to_string(), "100.0Pa".to_string())
     }
 }
