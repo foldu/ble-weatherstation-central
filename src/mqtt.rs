@@ -21,6 +21,7 @@ use tokio::{
     sync::{mpsc, Mutex},
     task,
 };
+use tokio_rustls::webpki::DNSName;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use url::Url;
 
@@ -52,13 +53,12 @@ pub(crate) enum Error {
 }
 
 pub(crate) struct Connection {
-    buf: Vec<u8>,
     sink: PacketSink,
 }
 
 enum Scheme {
     Mqtt,
-    MqttS,
+    MqttS { ca_pem: Vec<u8>, domain: DNSName },
 }
 
 pub(crate) struct ConnectOptions {
@@ -66,6 +66,41 @@ pub(crate) struct ConnectOptions {
     port: u16,
     username: Option<String>,
     password: Option<String>,
+    scheme: Scheme,
+}
+
+type MqttStream = FramedRead<Box<dyn AsyncRead + Unpin + Send + Sync>, MqttDecoder>;
+type MqttSink = FramedWrite<Box<dyn AsyncWrite + Unpin + Send + Sync>, MqttEncoder>;
+
+impl ConnectOptions {
+    async fn connect(&self) -> Result<(MqttStream, MqttSink), eyre::Error> {
+        let stream = TcpStream::connect((&self.host[..], self.port)).await?;
+        match &self.scheme {
+            Scheme::Mqtt => {
+                let (r, w) = stream.into_split();
+                // dedup
+                Ok((
+                    FramedRead::new(Box::new(r), MqttDecoder::default()),
+                    FramedWrite::new(Box::new(w), MqttEncoder),
+                ))
+            }
+            Scheme::MqttS { ca_pem, domain } => {
+                let mut config = tokio_rustls::rustls::ClientConfig::new();
+                config
+                    .root_store
+                    .add_pem_file(&mut io::Cursor::new(ca_pem))
+                    .unwrap();
+                let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+                let stream = connector.connect(domain.as_ref(), stream).await?;
+                let (r, w) = tokio::io::split(stream);
+                // this
+                Ok((
+                    FramedRead::new(Box::new(r), MqttDecoder::default()),
+                    FramedWrite::new(Box::new(w), MqttEncoder),
+                ))
+            }
+        }
+    }
 }
 
 impl TryFrom<&Url> for ConnectOptions {
@@ -73,14 +108,15 @@ impl TryFrom<&Url> for ConnectOptions {
 
     fn try_from(url: &Url) -> Result<Self, Self::Error> {
         let invalid_url = || Error::InvalidUrl { url: url.clone() };
-        let port = match url.scheme() {
+        let (port, scheme) = match url.scheme() {
             "mqtt" => {
                 tracing::warn!("Using non ssl mqtt");
-                1883
+                (1883, Scheme::Mqtt)
             }
             "mqtts" => {
                 return Err(Error::NotSupported);
-                8883
+                //(8883, Scheme::MqttS)
+                todo!()
             }
             _ => return Err(invalid_url()),
         };
@@ -99,6 +135,7 @@ impl TryFrom<&Url> for ConnectOptions {
                 Some(url.username().to_string())
             },
             password: url.password().map(ToOwned::to_owned),
+            scheme,
         })
     }
 }
@@ -117,25 +154,15 @@ impl Connection {
         Error,
     > {
         let options = ConnectOptions::try_from(url).unwrap();
-        let stream = TcpStream::connect((options.host, options.port))
-            .await
-            .map_err(|e| Error::Connect {
-                url: url.to_string(),
-                source: e,
-            })?;
 
-        let (r, w) = stream.into_split();
-        let r: Box<dyn AsyncRead + Unpin + Send> = Box::new(r);
-        let mut r = FramedRead::new(r, MqttDecoder::default());
+        let (mut r, w) = options.connect().await.unwrap();
         let sink = PacketSink::new(w);
 
-        let mut buf = Vec::new();
         let mut packet = ConnectPacket::new("MQTT", client_id);
         packet.set_user_name(options.username);
         packet.set_password(options.password);
         packet.set_clean_session(true);
         packet.set_keep_alive(keep_alive);
-        packet.encode(&mut buf).unwrap();
         sink.send_packet(packet).await?;
 
         match r.next().await.unwrap() {
@@ -156,7 +183,7 @@ impl Connection {
             task::spawn(ping_task(sink.clone(), keep_alive));
         }
 
-        Ok((Self { sink, buf }, pub_rx))
+        Ok((Self { sink }, pub_rx))
     }
 
     pub async fn publish_json(
@@ -192,11 +219,7 @@ async fn ping_task(sink: PacketSink, keep_alive: NonZeroU16) {
     }
 }
 
-async fn driver_task(
-    sink: PacketSink,
-    mut r: FramedRead<Box<dyn AsyncRead + Unpin + Send>, MqttDecoder>,
-    pub_tx: mpsc::Sender<(String, Vec<u8>)>,
-) {
+async fn driver_task(sink: PacketSink, mut r: MqttStream, pub_tx: mpsc::Sender<(String, Vec<u8>)>) {
     while let Some(packet) = r.next().await {
         match packet {
             Ok(VariablePacket::PingreqPacket(_)) => {
@@ -224,17 +247,11 @@ async fn driver_task(
 }
 
 #[derive(Clone)]
-struct PacketSink(Arc<Mutex<FramedWrite<Box<dyn AsyncWrite + Unpin + Send>, MqttEncoder>>>);
+struct PacketSink(Arc<Mutex<MqttSink>>);
 
 impl PacketSink {
-    fn new<W>(sink: W) -> Self
-    where
-        W: AsyncWrite + 'static + Unpin + Send,
-    {
-        Self(Arc::new(Mutex::new(FramedWrite::new(
-            Box::new(sink),
-            MqttEncoder,
-        ))))
+    fn new(sink: MqttSink) -> Self {
+        Self(Arc::new(Mutex::new(sink)))
     }
 
     async fn send_packet(&self, packet: impl Encodable) -> Result<(), io::Error> {
