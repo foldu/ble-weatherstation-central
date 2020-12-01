@@ -1,12 +1,12 @@
 use mqtt::{
     control::ConnectReturnCode,
     packet::{
-        ConnackPacket, ConnectPacket, Packet, PingreqPacket, PingrespPacket, PublishPacket,
-        QoSWithPacketIdentifier, SubscribePacket, VariablePacket,
+        ConnectPacket, Packet, PingreqPacket, PingrespPacket, PublishPacket,
+        QoSWithPacketIdentifier, VariablePacket,
     },
-    Decodable, Encodable, QualityOfService, TopicFilter,
+    Encodable,
 };
-use std::{convert::TryFrom, future::Future, io, num::NonZeroU16, sync::Arc, time::Duration};
+use std::{convert::TryFrom, io, num::NonZeroU16, sync::Arc, time::Duration};
 use tokio::{
     io::AsyncWriteExt,
     net::{
@@ -64,16 +64,20 @@ pub(crate) struct ConnectOptions {
 }
 
 impl TryFrom<&Url> for ConnectOptions {
-    type Error = eyre::Error;
+    type Error = Error;
 
     fn try_from(url: &Url) -> Result<Self, Self::Error> {
+        let invalid_url = || Error::InvalidUrl { url: url.clone() };
         let port = match url.scheme() {
             "mqtt" => {
                 tracing::warn!("Using non ssl mqtt");
                 1883
             }
-            "mqtts" => 8883,
-            _ => eyre::bail!("Invalid mqtt url scheme {} in url {}", url.scheme(), url),
+            "mqtts" => {
+                return Err(Error::NotSupported);
+                8883
+            }
+            _ => return Err(invalid_url()),
         };
 
         let port = url.port().unwrap_or(port);
@@ -83,7 +87,7 @@ impl TryFrom<&Url> for ConnectOptions {
             host: url
                 .host_str()
                 .map(ToOwned::to_owned)
-                .ok_or_else(|| eyre::format_err!("Missing host string in url {}", url))?,
+                .ok_or_else(invalid_url)?,
             username: if url.username().is_empty() {
                 None
             } else {
