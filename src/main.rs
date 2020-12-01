@@ -17,7 +17,7 @@ use futures_util::{
     StreamExt,
 };
 use sensor::SensorState;
-use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, fmt::Write, net::SocketAddr, sync::Arc, time::Duration};
 use timestamp::Timestamp;
 use tokio::{signal::unix, sync::RwLock, task};
 use unix::SignalKind;
@@ -45,6 +45,11 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
 
     let update_task = task::spawn(update_task(ctx.clone(), stream::select_all(sources)));
 
+    if let Some(ref url) = args.mqtt_server_url {
+        let (cxn, _) = mqtt::Connection::connect(url, "ble-weatherstation-central", 60).await?;
+        task::spawn(mqtt_publish_task(ctx.clone(), cxn));
+    }
+
     let term = unix::signal(SignalKind::terminate()).unwrap();
     let int = unix::signal(SignalKind::interrupt()).unwrap();
     let shutdown = async move {
@@ -68,6 +73,29 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
     svr.await;
 
     bluetooth_thread.join().expect("Bluetooth thread crashed")?;
+
+    Ok(())
+}
+
+async fn mqtt_publish_task(ctx: Context, mut cxn: mqtt::Connection) -> Result<(), mqtt::Error> {
+    let mut topic_buf = String::new();
+    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    while let Some(_) = interval.next().await {
+        let sensors = ctx.sensors.read().await;
+        for (addr, state) in &*sensors {
+            if let SensorState::Connected(values) = state {
+                topic_buf.clear();
+                write!(topic_buf, "sensors/weatherstation/{}", addr).unwrap();
+                // TODO: figure out what happens when mqtt server dies
+                if let Err(e) = cxn
+                    .publish_json(::mqtt::TopicName::new(topic_buf.clone()).unwrap(), &values)
+                    .await
+                {
+                    tracing::error!("Failed publishing to mqtt server: {}", e);
+                }
+            }
+        }
+    }
 
     Ok(())
 }

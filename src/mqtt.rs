@@ -68,10 +68,15 @@ impl TryFrom<&Url> for ConnectOptions {
 
     fn try_from(url: &Url) -> Result<Self, Self::Error> {
         let port = match url.scheme() {
-            "mqtt" => 1833,
+            "mqtt" => {
+                tracing::warn!("Using non ssl mqtt");
+                1883
+            }
             "mqtts" => 8883,
             _ => eyre::bail!("Invalid mqtt url scheme {} in url {}", url.scheme(), url),
         };
+
+        let port = url.port().unwrap_or(port);
 
         Ok(ConnectOptions {
             port,
@@ -186,10 +191,12 @@ async fn driver_task(
             Ok(VariablePacket::PingrespPacket(_)) => {}
             Ok(VariablePacket::SubackPacket(sub_ack)) => {
                 let id = sub_ack.packet_identifier();
+                // TODO:
             }
             Ok(VariablePacket::PublishPacket(packet)) => {
                 let topic = packet.topic_name().to_string();
-                pub_tx.send((topic, packet.payload())).await;
+                // don't care when recv dropped, just sent it into the trash
+                let _ = pub_tx.send((topic, packet.payload())).await;
             }
             Ok(other) => {
                 tracing::error!("Received unexpected packet {:#?}", other);
@@ -235,16 +242,16 @@ impl PacketSink {
     }
 }
 
-#[tokio::test]
-async fn test_mqtt() {
-    let url = Url::parse("mqtt://localhost").unwrap();
-    let (mut cxn, _) = Connection::connect(&url, "fish", 16).await.unwrap();
-    cxn.publish_json(
-        mqtt::TopicName::new("test/fish").unwrap(),
-        &vec![1_u8, 2, 3],
-    )
-    .await
-    .unwrap();
-
-    tokio::time::sleep(Duration::from_secs(60)).await;
-}
+//#[tokio::test]
+//async fn test_mqtt() {
+//    let url = Url::parse("mqtt://localhost").unwrap();
+//    let (mut cxn, _) = Connection::connect(&url, "fish", 16).await.unwrap();
+//    cxn.publish_json(
+//        mqtt::TopicName::new("test/fish").unwrap(),
+//        &vec![1_u8, 2, 3],
+//    )
+//    .await
+//    .unwrap();
+//
+//    tokio::time::sleep(Duration::from_secs(60)).await;
+//}

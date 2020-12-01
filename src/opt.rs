@@ -20,4 +20,8 @@ pub(crate) struct Opt {
     /// Host to bind to
     #[clap(long, default_value = "127.0.0.1")]
     pub(crate) host: IpAddr,
+
+    /// mqtt server url
+    #[clap(long)]
+    pub(crate) mqtt_server_url: Option<url::Url>,
 }
