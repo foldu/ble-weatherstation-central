@@ -153,8 +153,10 @@ impl Connection {
         ),
         Error,
     > {
+        // FIXME:
         let options = ConnectOptions::try_from(url).unwrap();
 
+        // FIXME:
         let (mut r, w) = options.connect().await.unwrap();
         let sink = PacketSink::new(w);
 
