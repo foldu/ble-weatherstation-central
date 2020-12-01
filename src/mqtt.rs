@@ -1,3 +1,7 @@
+mod codec;
+
+use codec::{MqttDecoder, MqttEncoder};
+use futures_util::SinkExt;
 use mqtt::{
     control::ConnectReturnCode,
     packet::{
@@ -6,9 +10,9 @@ use mqtt::{
     },
     Encodable,
 };
-use std::{convert::TryFrom, io, num::NonZeroU16, sync::Arc, time::Duration};
+use std::{convert::TryFrom, io, num::NonZeroU16, pin::Pin, sync::Arc, time::Duration};
 use tokio::{
-    io::AsyncWriteExt,
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
@@ -17,6 +21,7 @@ use tokio::{
     sync::{mpsc, Mutex},
     task,
 };
+use tokio_util::codec::{FramedRead, FramedWrite};
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
@@ -104,7 +109,13 @@ impl Connection {
         url: &Url,
         client_id: &str,
         keep_alive: u16,
-    ) -> Result<(Self, impl Stream<Item = (String, Vec<u8>)>), Error> {
+    ) -> Result<
+        (
+            Self,
+            impl Stream<Item = (String, Vec<u8>)> + Send + Unpin + Sync,
+        ),
+        Error,
+    > {
         let options = ConnectOptions::try_from(url).unwrap();
         let stream = TcpStream::connect((options.host, options.port))
             .await
@@ -113,7 +124,10 @@ impl Connection {
                 source: e,
             })?;
 
-        let (mut r, mut w) = stream.into_split();
+        let (r, w) = stream.into_split();
+        let r: Box<dyn AsyncRead + Unpin + Send> = Box::new(r);
+        let mut r = FramedRead::new(r, MqttDecoder::default());
+        let sink = PacketSink::new(w);
 
         let mut buf = Vec::new();
         let mut packet = ConnectPacket::new("MQTT", client_id);
@@ -122,10 +136,10 @@ impl Connection {
         packet.set_clean_session(true);
         packet.set_keep_alive(keep_alive);
         packet.encode(&mut buf).unwrap();
-        w.write_all(&buf).await?;
+        sink.send_packet(packet).await?;
 
-        match VariablePacket::parse(&mut r).await? {
-            VariablePacket::ConnackPacket(packet) => match packet.connect_return_code() {
+        match r.next().await.unwrap() {
+            Ok(VariablePacket::ConnackPacket(packet)) => match packet.connect_return_code() {
                 ConnectReturnCode::ConnectionAccepted => {}
                 return_code => return Err(Error::ConnectionRefused { return_code }),
             },
@@ -133,8 +147,6 @@ impl Connection {
                 return Err(Error::UnexpectedPacket);
             }
         }
-
-        let sink = PacketSink::new(w);
 
         let (pub_tx, pub_rx) = mpsc::channel(1);
 
@@ -158,7 +170,7 @@ impl Connection {
             serde_json::to_string(msg).unwrap(),
         );
 
-        self.sink.send_packet(&mut self.buf, &packet).await?;
+        self.sink.send_packet(packet).await?;
 
         Ok(())
     }
@@ -173,9 +185,8 @@ impl Connection {
 
 async fn ping_task(sink: PacketSink, keep_alive: NonZeroU16) {
     let mut interval = tokio::time::interval(Duration::from_secs(u64::from(keep_alive.get())));
-    let pingreq_buf = PacketBuf::new_with_packet(&PingreqPacket::new());
     while let Some(_) = interval.next().await {
-        if let Err(e) = sink.send_buf(&pingreq_buf).await {
+        if let Err(e) = sink.send_packet(PingreqPacket::new()).await {
             tracing::error!("Failed sending ping packet: {}", e)
         }
     }
@@ -183,14 +194,13 @@ async fn ping_task(sink: PacketSink, keep_alive: NonZeroU16) {
 
 async fn driver_task(
     sink: PacketSink,
-    mut r: OwnedReadHalf,
+    mut r: FramedRead<Box<dyn AsyncRead + Unpin + Send>, MqttDecoder>,
     pub_tx: mpsc::Sender<(String, Vec<u8>)>,
 ) {
-    let pingresp_buf = PacketBuf::new_with_packet(&PingrespPacket::new());
-    loop {
-        match VariablePacket::parse(&mut r).await {
+    while let Some(packet) = r.next().await {
+        match packet {
             Ok(VariablePacket::PingreqPacket(_)) => {
-                sink.send_buf(&pingresp_buf).await;
+                sink.send_packet(PingrespPacket::new()).await;
             }
             Ok(VariablePacket::PingrespPacket(_)) => {}
             Ok(VariablePacket::SubackPacket(sub_ack)) => {
@@ -210,39 +220,25 @@ async fn driver_task(
             }
         }
     }
-}
-
-struct PacketBuf(Vec<u8>);
-
-impl PacketBuf {
-    pub fn new_with_packet(packet: &impl Encodable) -> Self {
-        let mut ret = Vec::new();
-        packet.encode(&mut ret).unwrap();
-        ret.shrink_to_fit();
-        Self(ret)
-    }
+    tracing::error!("PacketSink stream stopped");
 }
 
 #[derive(Clone)]
-struct PacketSink(Arc<Mutex<OwnedWriteHalf>>);
+struct PacketSink(Arc<Mutex<FramedWrite<Box<dyn AsyncWrite + Unpin + Send>, MqttEncoder>>>);
 
 impl PacketSink {
-    fn new(sink: OwnedWriteHalf) -> Self {
-        Self(Arc::new(Mutex::new(sink)))
+    fn new<W>(sink: W) -> Self
+    where
+        W: AsyncWrite + 'static + Unpin + Send,
+    {
+        Self(Arc::new(Mutex::new(FramedWrite::new(
+            Box::new(sink),
+            MqttEncoder,
+        ))))
     }
 
-    async fn send_buf(&self, buf: &PacketBuf) -> Result<(), io::Error> {
-        self.0.lock().await.write_all(&buf.0).await
-    }
-
-    async fn send_packet(
-        &self,
-        buf: &mut Vec<u8>,
-        packet: &impl Encodable,
-    ) -> Result<(), io::Error> {
-        buf.clear();
-        packet.encode(buf).unwrap();
-        self.0.lock().await.write_all(buf).await
+    async fn send_packet(&self, packet: impl Encodable) -> Result<(), io::Error> {
+        self.0.lock().await.send(packet).await
     }
 }
 
