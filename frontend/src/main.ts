@@ -159,8 +159,17 @@ async function detail() {
 
 window.addEventListener("load", () => {
   const view = document.querySelector("body")?.id;
-  if (view) {
-    // FIXME: terrible!
-    eval(`${view}()`);
+  switch (view) {
+    case "overview":
+      overview();
+      break;
+    case "detail":
+      detail();
+      break;
+    case null:
+      break;
+    default:
+      console.error(`Unkown view ${view}`);
+      break;
   }
 });
