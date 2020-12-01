@@ -2,6 +2,7 @@ mod bluetooth;
 mod db;
 mod dummy;
 mod http;
+mod mqtt;
 mod opt;
 mod sensor;
 mod timestamp;
