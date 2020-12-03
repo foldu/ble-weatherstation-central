@@ -46,7 +46,9 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
     let update_task = task::spawn(update_task(ctx.clone(), stream::select_all(sources)));
 
     if let Some(ref url) = args.mqtt_server_url {
-        let (cxn, _) = mqtt::Connection::connect(url, "ble-weatherstation-central", 60).await?;
+        let options = mqtt::ConnectOptions::new(&url, mqtt::Ssl::None)?;
+        let (cxn, _) =
+            mqtt::Connection::connect(&options, "ble-weatherstation-central", 60).await?;
         task::spawn(mqtt_publish_task(ctx.clone(), cxn));
     }
 

@@ -3,6 +3,7 @@ use mqtt::{control::FixedHeader, packet::VariablePacket, Decodable, Encodable};
 use std::{convert::TryFrom, io};
 use tokio_util::codec::{Decoder, Encoder};
 
+#[derive(Copy, Clone)]
 pub(crate) enum MqttDecoder {
     NeedFixedHeader,
     NeedBytes { nbytes: usize },
@@ -16,17 +17,20 @@ impl Default for MqttDecoder {
 
 impl MqttDecoder {
     fn fixed_header(&self, src: &BytesMut) -> Result<FixedHeader, io::Error> {
-        FixedHeader::decode(&mut io::Cursor::new(&src[..1]))
+        FixedHeader::decode(&mut io::Cursor::new(&src[..]))
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 
     fn consume_full_packet(
         &mut self,
         src: &mut BytesMut,
+        nbytes: usize,
     ) -> Result<Option<VariablePacket>, io::Error> {
-        let ret = VariablePacket::decode(&mut io::Cursor::new(&src[..]))
+        let packet = src.split_to(nbytes + 1);
+        tracing::info!("{:#?}", packet);
+        let ret = VariablePacket::decode(&mut io::Cursor::new(&packet))
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        src.clear();
+        *self = MqttDecoder::NeedFixedHeader;
         Ok(Some(ret))
     }
 }
@@ -43,7 +47,7 @@ impl Decoder for MqttDecoder {
                     let fixed_header = self.fixed_header(src)?;
                     let nbytes = usize::try_from(fixed_header.remaining_length)
                         .ok()
-                        .and_then(|nbytes| nbytes.checked_add(1))
+                        .and_then(|len| len.checked_add(1))
                         .ok_or_else(|| {
                             io::Error::new(
                                 io::ErrorKind::InvalidData,
@@ -51,11 +55,11 @@ impl Decoder for MqttDecoder {
                             )
                         })?;
 
-                    if src.len() == nbytes {
-                        self.consume_full_packet(src)
+                    if src.len() >= nbytes {
+                        self.consume_full_packet(src, nbytes)
                     } else {
-                        *self = MqttDecoder::NeedBytes { nbytes };
-                        src.reserve(nbytes.checked_sub(1).unwrap_or(0));
+                        src.reserve(nbytes);
+                        *self = Self::NeedBytes { nbytes };
                         Ok(None)
                     }
                 } else {
@@ -63,8 +67,9 @@ impl Decoder for MqttDecoder {
                 }
             }
             MqttDecoder::NeedBytes { nbytes } => {
-                if *nbytes == src.len() {
-                    self.consume_full_packet(src)
+                let nbytes = *nbytes;
+                if nbytes >= src.len() {
+                    self.consume_full_packet(src, nbytes)
                 } else {
                     Ok(None)
                 }

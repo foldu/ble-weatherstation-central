@@ -10,26 +10,20 @@ use mqtt::{
     },
     Encodable,
 };
-use std::{convert::TryFrom, io, num::NonZeroU16, pin::Pin, sync::Arc, time::Duration};
+use std::{convert::TryFrom, io, num::NonZeroU16, sync::Arc, time::Duration};
 use tokio::{
-    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream,
-    },
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
     stream::{Stream, StreamExt},
     sync::{mpsc, Mutex},
     task,
 };
-use tokio_rustls::webpki::DNSName;
+use tokio_rustls::webpki::{DNSName, DNSNameRef};
 use tokio_util::codec::{FramedRead, FramedWrite};
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum Error {
-    #[error("Can't connect to {url}")]
-    Connect { url: String, source: io::Error },
-
     #[error("mqtt server refused connection")]
     ConnectionRefused { return_code: ConnectReturnCode },
 
@@ -47,9 +41,6 @@ pub(crate) enum Error {
 
     #[error("Invalid mqtt url {url}, for more information see https://github.com/mqtt/mqtt.org/wiki/URI-Scheme")]
     InvalidUrl { url: Url },
-
-    #[error("mqtts currently not supported")]
-    NotSupported,
 }
 
 pub(crate) struct Connection {
@@ -71,6 +62,11 @@ pub(crate) struct ConnectOptions {
 
 type MqttStream = FramedRead<Box<dyn AsyncRead + Unpin + Send + Sync>, MqttDecoder>;
 type MqttSink = FramedWrite<Box<dyn AsyncWrite + Unpin + Send + Sync>, MqttEncoder>;
+
+pub(crate) enum Ssl {
+    None,
+    WithCert(Vec<u8>),
+}
 
 impl ConnectOptions {
     async fn connect(&self) -> Result<(MqttStream, MqttSink), eyre::Error> {
@@ -101,23 +97,29 @@ impl ConnectOptions {
             }
         }
     }
-}
 
-impl TryFrom<&Url> for ConnectOptions {
-    type Error = Error;
-
-    fn try_from(url: &Url) -> Result<Self, Self::Error> {
+    pub fn new(url: &Url, ssl: Ssl) -> Result<Self, Error> {
         let invalid_url = || Error::InvalidUrl { url: url.clone() };
+        let host = url
+            .host_str()
+            .map(ToOwned::to_owned)
+            .ok_or_else(invalid_url)?;
+
         let (port, scheme) = match url.scheme() {
             "mqtt" => {
                 tracing::warn!("Using non ssl mqtt");
                 (1883, Scheme::Mqtt)
             }
-            "mqtts" => {
-                return Err(Error::NotSupported);
-                //(8883, Scheme::MqttS)
-                todo!()
-            }
+            "mqtts" => (
+                8883,
+                Scheme::MqttS {
+                    ca_pem: match ssl {
+                        Ssl::None => panic!(),
+                        Ssl::WithCert(cert) => cert,
+                    },
+                    domain: DNSNameRef::try_from_ascii_str(&host).unwrap().into(),
+                },
+            ),
             _ => return Err(invalid_url()),
         };
 
@@ -125,10 +127,7 @@ impl TryFrom<&Url> for ConnectOptions {
 
         Ok(ConnectOptions {
             port,
-            host: url
-                .host_str()
-                .map(ToOwned::to_owned)
-                .ok_or_else(invalid_url)?,
+            host,
             username: if url.username().is_empty() {
                 None
             } else {
@@ -143,7 +142,7 @@ impl TryFrom<&Url> for ConnectOptions {
 impl Connection {
     pub async fn connect(
         // see: https://github.com/mqtt/mqtt.org/wiki/URI-Scheme
-        url: &Url,
+        connect_options: &ConnectOptions,
         client_id: &str,
         keep_alive: u16,
     ) -> Result<
@@ -153,16 +152,12 @@ impl Connection {
         ),
         Error,
     > {
-        // FIXME:
-        let options = ConnectOptions::try_from(url).unwrap();
-
-        // FIXME:
-        let (mut r, w) = options.connect().await.unwrap();
+        let (mut r, w) = connect_options.connect().await.unwrap();
         let sink = PacketSink::new(w);
 
         let mut packet = ConnectPacket::new("MQTT", client_id);
-        packet.set_user_name(options.username);
-        packet.set_password(options.password);
+        packet.set_user_name(connect_options.username.clone());
+        packet.set_password(connect_options.password.clone());
         packet.set_clean_session(true);
         packet.set_keep_alive(keep_alive);
         sink.send_packet(packet).await?;
@@ -172,7 +167,8 @@ impl Connection {
                 ConnectReturnCode::ConnectionAccepted => {}
                 return_code => return Err(Error::ConnectionRefused { return_code }),
             },
-            _ => {
+            e => {
+                tracing::error!("{:#?}", e);
                 return Err(Error::UnexpectedPacket);
             }
         }
@@ -215,6 +211,7 @@ impl Connection {
 async fn ping_task(sink: PacketSink, keep_alive: NonZeroU16) {
     let mut interval = tokio::time::interval(Duration::from_secs(u64::from(keep_alive.get())));
     while let Some(_) = interval.next().await {
+        tracing::trace!("Sending ping");
         if let Err(e) = sink.send_packet(PingreqPacket::new()).await {
             tracing::error!("Failed sending ping packet: {}", e)
         }
