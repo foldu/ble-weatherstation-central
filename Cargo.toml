@@ -16,6 +16,7 @@ bytes = "0.6.0"
 clap = "3.0.0-beta.2"
 derive_more = "0.99.11"
 directories-next = "2.0.0"
+envy = "0.4.1"
 eyre = "0.6.2"
 flume = "0.9.1"
 futures-util = "0.3.7"
@@ -31,7 +32,7 @@ tokio-rustls = "0.21.0"
 tokio-util = { version = "0.5.0", features = ["codec"], default-features = false }
 tracing = "0.1.21"
 tracing-subscriber = { version = "0.2.15", default-features = false, features = ["smallvec", "chrono", "fmt", "ansi"] }
-url = "2.2.0"
+url = { version = "2.2.0", features = ["serde"] }
 warp = { git = "https://github.com/aknuds1/warp", default-features = false, rev = "fc71e963c6cb88bc5e85802febbec343e93e606a" }
 zbus = { git = "https://gitlab.freedesktop.org/zeenix/zbus", rev = "d9bfcab6327a1f2e71abdd1e9a560189efcc84bd" }
 zerocopy = "0.3.0"

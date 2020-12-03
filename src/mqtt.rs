@@ -192,7 +192,7 @@ impl Connection {
         let packet = PublishPacket::new(
             topic_name,
             QoSWithPacketIdentifier::Level0,
-            serde_json::to_string(msg).unwrap(),
+            serde_json::to_string(msg)?,
         );
 
         self.sink.send_packet(packet).await?;

@@ -1,4 +1,5 @@
 mod bluetooth;
+mod config;
 mod db;
 mod dummy;
 mod http;
@@ -9,8 +10,8 @@ mod timestamp;
 
 use crate::{bluetooth::BluetoothAddress, dummy::dummy_sensor, opt::Opt};
 use clap::Clap;
+use config::Config;
 use db::AddrDbEntry;
-use directories_next::ProjectDirs;
 use eyre::Context as _;
 use futures_util::{
     stream::{self, Stream},
@@ -25,7 +26,8 @@ use unix::SignalKind;
 type UpdateSource = dyn Stream<Item = BTreeMap<BluetoothAddress, SensorState>> + Unpin + Send;
 
 async fn run(args: Opt) -> Result<(), eyre::Error> {
-    let ctx = Context::create(&args)?;
+    let config = Config::from_env()?;
+    let ctx = Context::create(&config)?;
 
     let (stopped_tx, stopped_rx) = flume::bounded(1);
     let (bluetooth_thread, bluetooth_failed, bluetooth_update) =
@@ -34,7 +36,7 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
     let mut sources: Vec<Box<UpdateSource>> = Vec::new();
 
     sources.push(Box::new(bluetooth_update.into_stream()));
-    if let Some(n) = args.demo {
+    if let Some(n) = config.demo {
         tracing::info!("Simulating {} dummy sensors", n);
         for i in 0..n.get() {
             let (dummy_task, dummy_stream) = dummy_sensor(BluetoothAddress::from(u64::from(i)));
@@ -45,10 +47,8 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
 
     let update_task = task::spawn(update_task(ctx.clone(), stream::select_all(sources)));
 
-    if let Some(ref url) = args.mqtt_server_url {
-        let options = mqtt::ConnectOptions::new(&url, mqtt::Ssl::None)?;
-        let (cxn, _) =
-            mqtt::Connection::connect(&options, "ble-weatherstation-central", 60).await?;
+    if let Some(ref options) = config.mqtt_options {
+        let (cxn, _) = mqtt::Connection::connect(options, "ble-weatherstation-central", 60).await?;
         task::spawn(mqtt_publish_task(ctx.clone(), cxn));
     }
 
@@ -69,7 +69,7 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
         }
     };
 
-    let (addr, svr) = http::serve(ctx, SocketAddr::from((args.host, args.port)), shutdown);
+    let (addr, svr) = http::serve(ctx, SocketAddr::from((config.host, config.port)), shutdown);
     tracing::info!("Started server on {}", addr);
 
     svr.await;
@@ -170,19 +170,9 @@ fn main() -> Result<(), eyre::Error> {
 pub(crate) struct Context(Arc<ContextInner>);
 
 impl Context {
-    pub fn create(args: &Opt) -> Result<Self, eyre::Error> {
-        let db_path = match args.db_path {
-            Some(ref path) => path.clone(),
-            None => {
-                let dirs = ProjectDirs::from("org", "foldu", env!("CARGO_PKG_NAME"))
-                    .ok_or_else(|| eyre::format_err!("Could not get project directories"))?;
-                dirs.data_dir()
-                    .join(concat!(env!("CARGO_PKG_NAME"), ".mdb"))
-            }
-        };
-
-        let db = db::Db::open(&db_path)
-            .with_context(|| format!("Opening database in {}", db_path.display()))?;
+    pub fn create(config: &Config) -> Result<Self, eyre::Error> {
+        let db = db::Db::open(&config.db_path)
+            .with_context(|| format!("Opening database in {}", config.db_path.display()))?;
 
         let mut sensors = BTreeMap::new();
         {
