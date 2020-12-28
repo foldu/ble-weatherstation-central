@@ -27,13 +27,12 @@ rand = "0.7.3"
 serde = { version = "1.0.117", features = ["derive"] }
 serde_json = "1.0.59"
 thiserror = "1.0.22"
-tokio = { version = "0.3.0", features = ["rt-multi-thread", "sync", "time", "signal", "macros", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "signal", "macros", "net"] }
 tokio-mqtt = { path = "tokio-mqtt" }
-tokio-util = { version = "0.5.0", features = ["codec"], default-features = false }
 tracing = "0.1.21"
 tracing-subscriber = { version = "0.2.15", default-features = false, features = ["smallvec", "chrono", "fmt", "ansi"] }
 url = { version = "2.2.0", features = ["serde"] }
-warp = { git = "https://github.com/aknuds1/warp", default-features = false, rev = "fc71e963c6cb88bc5e85802febbec343e93e606a" }
+warp = { git = "https://github.com/aknuds1/warp", default-features = false, rev = "f6508fa126663f06e4240f1b61610b3ca0b7611b" }
 zbus = { git = "https://gitlab.freedesktop.org/zeenix/zbus", rev = "d9bfcab6327a1f2e71abdd1e9a560189efcc84bd" }
 zerocopy = "0.3.0"
 zvariant = { git = "https://gitlab.freedesktop.org/zeenix/zbus", rev = "d9bfcab6327a1f2e71abdd1e9a560189efcc84bd" }
