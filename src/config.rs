@@ -1,4 +1,3 @@
-use crate::mqtt;
 use directories_next::ProjectDirs;
 use eyre::Context;
 use std::{
@@ -7,6 +6,7 @@ use std::{
     num::NonZeroU8,
     path::PathBuf,
 };
+use tokio_mqtt as mqtt;
 
 #[derive(serde::Deserialize)]
 struct EnvConfig {

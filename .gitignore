@@ -1,4 +1,6 @@
-/target
+target
 /result
 /frontend/dist
 node_modules
+.direnv
+.log

@@ -3,7 +3,6 @@ mod config;
 mod db;
 mod dummy;
 mod http;
-mod mqtt;
 mod opt;
 mod sensor;
 mod timestamp;
@@ -48,7 +47,8 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
     let update_task = task::spawn(update_task(ctx.clone(), stream::select_all(sources)));
 
     if let Some(ref options) = config.mqtt_options {
-        let (cxn, _) = mqtt::Connection::connect(options, "ble-weatherstation-central", 60).await?;
+        let (cxn, _) =
+            tokio_mqtt::Connection::connect(options, "ble-weatherstation-central", 60).await?;
         task::spawn(mqtt_publish_task(ctx.clone(), cxn));
     }
 
@@ -79,18 +79,26 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
     Ok(())
 }
 
-async fn mqtt_publish_task(ctx: Context, mut cxn: mqtt::Connection) -> Result<(), mqtt::Error> {
+async fn mqtt_publish_task(
+    ctx: Context,
+    mut cxn: tokio_mqtt::Connection,
+) -> Result<(), tokio_mqtt::Error> {
     let mut topic_buf = String::new();
     let mut interval = tokio::time::interval(Duration::from_secs(60));
+    let mut json_buf = Vec::new();
     while let Some(_) = interval.next().await {
         let sensors = ctx.sensors.read().await;
         for (addr, state) in &*sensors {
             if let SensorState::Connected(values) = state {
                 topic_buf.clear();
                 write!(topic_buf, "sensors/weatherstation/{}", addr).unwrap();
+                serde_json::to_writer(std::io::Cursor::new(&mut json_buf), &values).unwrap();
                 // TODO: figure out what happens when mqtt server dies
                 if let Err(e) = cxn
-                    .publish_json(::mqtt::TopicName::new(topic_buf.clone()).unwrap(), &values)
+                    .publish(
+                        tokio_mqtt::TopicName::new(topic_buf.clone()).unwrap(),
+                        json_buf.clone(),
+                    )
                     .await
                 {
                     tracing::error!("Failed publishing to mqtt server: {}", e);

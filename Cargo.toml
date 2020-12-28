@@ -21,14 +21,14 @@ eyre = "0.6.2"
 flume = "0.9.1"
 futures-util = "0.3.7"
 heed = "0.10.1"
-mqtt-protocol = { version = "0.9.0", features = ["async"] }
+mqtt-protocol = { version = "0.10.0", default-features = false }
 nix = "0.19.0"
 rand = "0.7.3"
 serde = { version = "1.0.117", features = ["derive"] }
 serde_json = "1.0.59"
 thiserror = "1.0.22"
 tokio = { version = "0.3.0", features = ["rt-multi-thread", "sync", "time", "signal", "macros", "net"] }
-tokio-rustls = "0.21.0"
+tokio-mqtt = { path = "tokio-mqtt" }
 tokio-util = { version = "0.5.0", features = ["codec"], default-features = false }
 tracing = "0.1.21"
 tracing-subscriber = { version = "0.2.15", default-features = false, features = ["smallvec", "chrono", "fmt", "ansi"] }

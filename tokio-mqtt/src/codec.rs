@@ -27,7 +27,7 @@ impl MqttDecoder {
         nbytes: usize,
     ) -> Result<Option<VariablePacket>, io::Error> {
         let packet = src.split_to(nbytes + 1);
-        tracing::info!("{:#?}", packet);
+        log::trace!("{:#?}", packet);
         let ret = VariablePacket::decode(&mut io::Cursor::new(&packet))
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         *self = MqttDecoder::NeedFixedHeader;

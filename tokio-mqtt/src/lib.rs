@@ -14,16 +14,18 @@ use std::{convert::TryFrom, io, num::NonZeroU16, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
-    stream::{Stream, StreamExt},
     sync::{mpsc, Mutex},
     task,
 };
 use tokio_rustls::webpki::{DNSName, DNSNameRef};
+use tokio_stream::{Stream, StreamExt};
 use tokio_util::codec::{FramedRead, FramedWrite};
 use url::Url;
 
+pub use mqtt::TopicName;
+
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum Error {
+pub enum Error {
     #[error("mqtt server refused connection")]
     ConnectionRefused { return_code: ConnectReturnCode },
 
@@ -36,45 +38,55 @@ pub(crate) enum Error {
     #[error("Received unexpected packet")]
     UnexpectedPacket,
 
-    #[error("Could not serialize data as json")]
-    Serialize(#[from] serde_json::Error),
-
     #[error("Invalid mqtt url {url}, for more information see https://github.com/mqtt/mqtt.org/wiki/URI-Scheme")]
     InvalidUrl { url: Url },
 }
 
-pub(crate) struct Connection {
+pub struct Connection {
     sink: PacketSink,
 }
 
-enum Scheme {
+pub enum Scheme {
     Mqtt,
     MqttS { ca_pem: Vec<u8>, domain: DNSName },
 }
 
-pub(crate) struct ConnectOptions {
-    host: String,
-    port: u16,
-    username: Option<String>,
-    password: Option<String>,
-    scheme: Scheme,
+pub struct ConnectOptions {
+    pub host: String,
+    pub port: u16,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub scheme: Scheme,
 }
 
 type MqttStream = FramedRead<Box<dyn AsyncRead + Unpin + Send + Sync>, MqttDecoder>;
 type MqttSink = FramedWrite<Box<dyn AsyncWrite + Unpin + Send + Sync>, MqttEncoder>;
 
-pub(crate) enum Ssl {
+pub enum Ssl {
     None,
     WithCert(Vec<u8>),
 }
 
+struct RxWrap<T>(mpsc::Receiver<T>);
+
+impl<T> Stream for RxWrap<T> {
+    type Item = T;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.0.poll_recv(cx)
+    }
+}
+
 impl ConnectOptions {
-    async fn connect(&self) -> Result<(MqttStream, MqttSink), eyre::Error> {
+    async fn connect(&self) -> Result<(MqttStream, MqttSink), Error> {
         let stream = TcpStream::connect((&self.host[..], self.port)).await?;
         match &self.scheme {
             Scheme::Mqtt => {
                 let (r, w) = stream.into_split();
-                // dedup
+                // dedup |
                 Ok((
                     FramedRead::new(Box::new(r), MqttDecoder::default()),
                     FramedWrite::new(Box::new(w), MqttEncoder),
@@ -89,7 +101,7 @@ impl ConnectOptions {
                 let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
                 let stream = connector.connect(domain.as_ref(), stream).await?;
                 let (r, w) = tokio::io::split(stream);
-                // this
+                // this <-
                 Ok((
                     FramedRead::new(Box::new(r), MqttDecoder::default()),
                     FramedWrite::new(Box::new(w), MqttEncoder),
@@ -106,10 +118,7 @@ impl ConnectOptions {
             .ok_or_else(invalid_url)?;
 
         let (port, scheme) = match url.scheme() {
-            "mqtt" => {
-                tracing::warn!("Using non ssl mqtt");
-                (1883, Scheme::Mqtt)
-            }
+            "mqtt" => (1883, Scheme::Mqtt),
             "mqtts" => (
                 8883,
                 Scheme::MqttS {
@@ -155,7 +164,7 @@ impl Connection {
         let (mut r, w) = connect_options.connect().await.unwrap();
         let sink = PacketSink::new(w);
 
-        let mut packet = ConnectPacket::new("MQTT", client_id);
+        let mut packet = ConnectPacket::new(client_id);
         packet.set_user_name(connect_options.username.clone());
         packet.set_password(connect_options.password.clone());
         packet.set_clean_session(true);
@@ -167,8 +176,7 @@ impl Connection {
                 ConnectReturnCode::ConnectionAccepted => {}
                 return_code => return Err(Error::ConnectionRefused { return_code }),
             },
-            e => {
-                tracing::error!("{:#?}", e);
+            _ => {
                 return Err(Error::UnexpectedPacket);
             }
         }
@@ -181,19 +189,15 @@ impl Connection {
             task::spawn(ping_task(sink.clone(), keep_alive));
         }
 
-        Ok((Self { sink }, pub_rx))
+        Ok((Self { sink }, RxWrap(pub_rx)))
     }
 
-    pub async fn publish_json(
+    pub async fn publish(
         &mut self,
         topic_name: mqtt::TopicName,
-        msg: &impl serde::Serialize,
+        msg: Vec<u8>,
     ) -> Result<(), Error> {
-        let packet = PublishPacket::new(
-            topic_name,
-            QoSWithPacketIdentifier::Level0,
-            serde_json::to_string(msg)?,
-        );
+        let packet = PublishPacket::new(topic_name, QoSWithPacketIdentifier::Level0, msg);
 
         self.sink.send_packet(packet).await?;
 
@@ -210,10 +214,10 @@ impl Connection {
 
 async fn ping_task(sink: PacketSink, keep_alive: NonZeroU16) {
     let mut interval = tokio::time::interval(Duration::from_secs(u64::from(keep_alive.get())));
-    while let Some(_) = interval.next().await {
-        tracing::trace!("Sending ping");
+    loop {
+        interval.tick().await;
         if let Err(e) = sink.send_packet(PingreqPacket::new()).await {
-            tracing::error!("Failed sending ping packet: {}", e)
+            log::error!("Failed sending ping packet: {}", e)
         }
     }
 }
@@ -222,7 +226,9 @@ async fn driver_task(sink: PacketSink, mut r: MqttStream, pub_tx: mpsc::Sender<(
     while let Some(packet) = r.next().await {
         match packet {
             Ok(VariablePacket::PingreqPacket(_)) => {
-                sink.send_packet(PingrespPacket::new()).await;
+                if let Err(e) = sink.send_packet(PingrespPacket::new()).await {
+                    log::error!("Could not respond to ping: {}", e);
+                }
             }
             Ok(VariablePacket::PingrespPacket(_)) => {}
             Ok(VariablePacket::SubackPacket(sub_ack)) => {
@@ -235,14 +241,14 @@ async fn driver_task(sink: PacketSink, mut r: MqttStream, pub_tx: mpsc::Sender<(
                 let _ = pub_tx.send((topic, packet.payload())).await;
             }
             Ok(other) => {
-                tracing::error!("Received unexpected packet {:#?}", other);
+                log::error!("Received unexpected packet {:#?}", other);
             }
             Err(e) => {
-                tracing::error!("mqtt driver task failed to decode package: {}", e);
+                log::error!("mqtt driver task failed to decode package: {}", e);
             }
         }
     }
-    tracing::error!("PacketSink stream stopped");
+    log::error!("PacketSink stream stopped");
 }
 
 #[derive(Clone)]
@@ -257,17 +263,3 @@ impl PacketSink {
         self.0.lock().await.send(packet).await
     }
 }
-
-//#[tokio::test]
-//async fn test_mqtt() {
-//    let url = Url::parse("mqtt://localhost").unwrap();
-//    let (mut cxn, _) = Connection::connect(&url, "fish", 16).await.unwrap();
-//    cxn.publish_json(
-//        mqtt::TopicName::new("test/fish").unwrap(),
-//        &vec![1_u8, 2, 3],
-//    )
-//    .await
-//    .unwrap();
-//
-//    tokio::time::sleep(Duration::from_secs(60)).await;
-//}

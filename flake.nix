@@ -15,8 +15,6 @@
       let
         pkgs = import nixpkgs { inherit system; };
         nativeBuildInputs = with pkgs; [
-          cargo
-          rustc
           yarn
         ];
       in
