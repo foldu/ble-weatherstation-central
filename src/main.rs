@@ -52,10 +52,17 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
         task::spawn(mqtt_publish_task(ctx.clone(), cxn));
     }
 
-    let term = unix::signal(SignalKind::terminate()).unwrap();
-    let int = unix::signal(SignalKind::interrupt()).unwrap();
+    let mut term = unix::signal(SignalKind::terminate()).unwrap();
+    let mut int = unix::signal(SignalKind::interrupt()).unwrap();
     let shutdown = async move {
-        let mut signal = stream::select(term, int).map(|_| ());
+        // FIXME:
+        let signal = async move {
+            tokio::select! {
+                _ = term.recv() => (),
+                _ = int.recv() => ()
+            }
+        };
+
         tokio::select! {
             // TODO: unify crash error cases
             Err(e) = update_task => {
@@ -63,7 +70,7 @@ async fn run(args: Opt) -> Result<(), eyre::Error> {
             }
             _ = bluetooth_failed => {
             }
-            _ = signal.next() => {
+            _ = signal => {
                 drop(stopped_tx);
             }
         }
@@ -86,7 +93,7 @@ async fn mqtt_publish_task(
     let mut topic_buf = String::new();
     let mut interval = tokio::time::interval(Duration::from_secs(60));
     let mut json_buf = Vec::new();
-    while let Some(_) = interval.next().await {
+    while let _tick = interval.tick().await {
         let sensors = ctx.sensors.read().await;
         for (addr, state) in &*sensors {
             if let SensorState::Connected(values) = state {
@@ -118,7 +125,7 @@ async fn update_task(
     loop {
         // TODO: make both arms a function
         tokio::select! {
-            _ = interval.next() => {
+            _ = interval.tick() => {
                 let sensors = ctx.sensors.read().await;
                 let now = Timestamp::now();
                 let mut txn  = ctx.db.log_txn()?;

@@ -88,5 +88,5 @@ pub(crate) fn dummy_sensor(
         }
     };
 
-    (dummy_task, rx)
+    (dummy_task, tokio_stream::wrappers::ReceiverStream::new(rx))
 }

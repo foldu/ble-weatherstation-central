@@ -14,7 +14,7 @@ use std::{
     collections::BTreeMap,
     convert::TryFrom,
     fs,
-    ops::{Range, RangeBounds},
+    ops::Range,
     path::{Path, PathBuf},
     sync::{RwLock, RwLockReadGuard},
 };
