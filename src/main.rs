@@ -22,9 +22,38 @@ use timestamp::Timestamp;
 use tokio::{signal::unix, sync::RwLock, task};
 use unix::SignalKind;
 
+fn main() -> Result<(), eyre::Error> {
+    let args = Opt::parse();
+
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
+    match args.executor {
+        opt::Rt::MultiThread => {
+            let mut builder = tokio::runtime::Builder::new_multi_thread();
+            let rt = if let Some(n) = args.workers {
+                builder.worker_threads(n.get())
+            } else {
+                &mut builder
+            }
+            .enable_all()
+            .build()?;
+
+            rt.block_on(run())
+        }
+        opt::Rt::CurrentThread => {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(run())
+        }
+    }
+}
+
 type UpdateSource = dyn Stream<Item = BTreeMap<BluetoothAddress, SensorState>> + Unpin + Send;
 
-async fn run(args: Opt) -> Result<(), eyre::Error> {
+async fn run() -> Result<(), eyre::Error> {
     let config = Config::from_env()?;
     let ctx = Context::create(&config)?;
 
@@ -93,7 +122,8 @@ async fn mqtt_publish_task(
     let mut topic_buf = String::new();
     let mut interval = tokio::time::interval(Duration::from_secs(60));
     let mut json_buf = Vec::new();
-    while let _tick = interval.tick().await {
+    loop {
+        interval.tick().await;
         let sensors = ctx.sensors.read().await;
         for (addr, state) in &*sensors {
             if let SensorState::Connected(values) = state {
@@ -113,8 +143,6 @@ async fn mqtt_publish_task(
             }
         }
     }
-
-    Ok(())
 }
 
 async fn update_task(
@@ -164,21 +192,6 @@ async fn update_task(
             }
         }
     }
-}
-
-fn main() -> Result<(), eyre::Error> {
-    let args = Opt::parse();
-
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
-
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()?;
-
-    rt.block_on(run(args))
 }
 
 #[derive(derive_more::Deref, Clone)]
