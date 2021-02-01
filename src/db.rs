@@ -72,7 +72,7 @@ impl<'a> LogTransaction<'a> {
         values: SensorValues,
     ) -> Result<(), heed::Error> {
         if let Some(db) = self.sensor_values.get(&addr) {
-            db.put(
+            db.append(
                 self.txn.inner_mut(),
                 &BEU32::new(timestamp.as_u32()),
                 &values.into(),
@@ -102,11 +102,15 @@ impl Db {
             sensor_log: RwLock::new(BTreeMap::new()),
         };
 
-        {
+        let known_addrs = {
             let txn = ret.read_txn()?;
+            let it = ret.known_addrs(&txn)?;
+            it.collect::<Result<Vec<_>, _>>()?
+        };
+
+        {
             let mut sensor_log = ret.sensor_log.write().unwrap();
-            for addr in ret.known_addrs(&txn)? {
-                let addr = addr?;
+            for addr in known_addrs {
                 sensor_log.insert(addr, ret.env.create_database(Some(&addr.to_string()))?);
             }
         }
