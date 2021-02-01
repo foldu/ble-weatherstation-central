@@ -9,7 +9,6 @@ use heed::{
     RoTxn,
 };
 use std::{
-    cell::RefCell,
     collections::BTreeMap,
     convert::TryFrom,
     fs,
@@ -34,34 +33,9 @@ pub(crate) struct AddrDbEntry {
     pub(crate) label: Option<String>,
 }
 
-// needed because of https://github.com/Kerollmops/heed/issues/20
-pub struct RwTxn<'a, 'b>(Option<heed::RwTxn<'a, 'b>>);
-
-thread_local! {
-    static RW_TXN_RUNNING: RefCell<bool> = RefCell::new(false);
-}
-
-impl Drop for RwTxn<'_, '_> {
-    fn drop(&mut self) {
-        RW_TXN_RUNNING.with(|running| {
-            *running.borrow_mut() = false;
-        })
-    }
-}
-
-impl<'a, 'b> RwTxn<'a, 'b> {
-    pub(crate) fn commit(mut self) -> Result<(), Error> {
-        self.0.take().unwrap().commit().map_err(Error::from)
-    }
-
-    fn inner_mut(&mut self) -> &mut heed::RwTxn<'a, 'b, ()> {
-        self.0.as_mut().unwrap()
-    }
-}
-
 pub(crate) struct LogTransaction<'a> {
     sensor_values: RwLockReadGuard<'a, LogDb>,
-    txn: RwTxn<'a, 'a>,
+    txn: heed::RwTxn<'a, 'a>,
 }
 
 impl<'a> LogTransaction<'a> {
@@ -73,7 +47,7 @@ impl<'a> LogTransaction<'a> {
     ) -> Result<(), heed::Error> {
         if let Some(db) = self.sensor_values.get(&addr) {
             db.append(
-                self.txn.inner_mut(),
+                &mut self.txn,
                 &BEU32::new(timestamp.as_u32()),
                 &values.into(),
             )?;
@@ -82,7 +56,7 @@ impl<'a> LogTransaction<'a> {
     }
 
     pub(crate) fn commit(self) -> Result<(), Error> {
-        self.txn.commit()
+        self.txn.commit().map_err(heed_err)
     }
 }
 
@@ -122,19 +96,8 @@ impl Db {
         self.env.read_txn().map_err(heed_err)
     }
 
-    pub fn write_txn(&self) -> Result<RwTxn, Error> {
-        RW_TXN_RUNNING.with(|running| {
-            let mut running = running.borrow_mut();
-            if *running {
-                Err(Error::MultipleWriteTransaction)
-            } else {
-                *running = true;
-                self.env
-                    .write_txn()
-                    .map(|txn| RwTxn(Some(txn)))
-                    .map_err(Error::from)
-            }
-        })
+    pub fn write_txn(&self) -> Result<heed::RwTxn, Error> {
+        self.env.write_txn().map_err(heed_err)
     }
 
     pub fn log_txn(&self) -> Result<LogTransaction, Error> {
@@ -154,13 +117,11 @@ impl Db {
 
     pub fn put_addr(
         &self,
-        txn: &mut RwTxn<'_, '_>,
+        txn: &mut heed::RwTxn<'_, '_>,
         addr: BluetoothAddress,
         data: &AddrDbEntry,
     ) -> Result<(), Error> {
-        self.addr_db
-            .put(txn.inner_mut(), &addr, data)
-            .map_err(heed_err)
+        self.addr_db.put(txn, &addr, data).map_err(heed_err)
     }
 
     pub fn known_addrs<'txn, T>(
@@ -175,12 +136,10 @@ impl Db {
 
     pub fn delete_addr(
         &self,
-        txn: &mut RwTxn<'_, '_>,
+        txn: &mut heed::RwTxn<'_, '_>,
         addr: BluetoothAddress,
     ) -> Result<bool, Error> {
-        self.addr_db
-            .delete(txn.inner_mut(), &addr)
-            .map_err(heed_err)
+        self.addr_db.delete(txn, &addr).map_err(heed_err)
     }
 
     pub fn get_log<T>(
@@ -216,9 +175,6 @@ pub(crate) enum Error {
         path: PathBuf,
         source: std::io::Error,
     },
-
-    #[error("Multiple write transactions opened")]
-    MultipleWriteTransaction,
 
     #[error("Error in database backend")]
     Heed(#[source] Box<dyn std::error::Error + Send + Sync>),

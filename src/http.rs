@@ -1,7 +1,10 @@
 mod templates;
 
 use crate::{
-    bluetooth::BluetoothAddress, db::AddrDbEntry, sensor::SensorValues, timestamp::Timestamp,
+    bluetooth::BluetoothAddress,
+    db::{self, AddrDbEntry},
+    sensor::SensorValues,
+    timestamp::Timestamp,
 };
 use std::{future::Future, net::SocketAddr};
 use warp::{http::StatusCode, reject, Filter};
@@ -155,7 +158,7 @@ async fn change_label(
         label: req.new_label,
     };
     ctx.db.put_addr(&mut txn, req.addr, &entry)?;
-    txn.commit()?;
+    txn.commit().map_err(db::Error::from)?;
 
     Ok(warp::reply::with_status("", StatusCode::OK))
 }
@@ -169,7 +172,7 @@ async fn forget(ctx: super::Context, req: Forget) -> Result<impl warp::Reply, wa
     ctx.sensors.write().await.remove(&req.addr);
     let mut txn = ctx.db.write_txn()?;
     ctx.db.delete_addr(&mut txn, req.addr)?;
-    txn.commit()?;
+    txn.commit().map_err(db::Error::from)?;
     Ok(warp::reply::with_status("", StatusCode::OK))
 }
 
