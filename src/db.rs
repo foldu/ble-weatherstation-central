@@ -5,8 +5,7 @@ use crate::{
 };
 use heed::{
     byteorder::BigEndian,
-    types::{OwnedType, SerdeBincode},
-    zerocopy::U32,
+    types::{integer::U32, OwnedType, SerdeBincode},
     RoTxn,
 };
 use std::{
@@ -116,7 +115,7 @@ impl Db {
     }
 
     pub fn read_txn(&self) -> Result<heed::RoTxn, Error> {
-        self.env.read_txn().map_err(Error::Heed)
+        self.env.read_txn().map_err(heed_err)
     }
 
     pub fn write_txn(&self) -> Result<RwTxn, Error> {
@@ -146,7 +145,7 @@ impl Db {
         txn: &'txn RoTxn<'_, T>,
         addr: BluetoothAddress,
     ) -> Result<Option<AddrDbEntry>, Error> {
-        self.addr_db.get(txn, &addr).map_err(Error::Heed)
+        self.addr_db.get(txn, &addr).map_err(heed_err)
     }
 
     pub fn put_addr(
@@ -157,7 +156,7 @@ impl Db {
     ) -> Result<(), Error> {
         self.addr_db
             .put(txn.inner_mut(), &addr, data)
-            .map_err(Error::Heed)
+            .map_err(heed_err)
     }
 
     pub fn known_addrs<'txn, T>(
@@ -166,8 +165,8 @@ impl Db {
     ) -> Result<impl Iterator<Item = Result<BluetoothAddress, Error>> + 'txn, Error> {
         self.addr_db
             .iter(txn)
-            .map(|it| it.map(|res| res.map(|(addr, _)| addr).map_err(Error::Heed)))
-            .map_err(Error::Heed)
+            .map(|it| it.map(|res| res.map(|(addr, _)| addr).map_err(heed_err)))
+            .map_err(heed_err)
     }
 
     pub fn delete_addr(
@@ -177,7 +176,7 @@ impl Db {
     ) -> Result<bool, Error> {
         self.addr_db
             .delete(txn.inner_mut(), &addr)
-            .map_err(Error::Heed)
+            .map_err(heed_err)
     }
 
     pub fn get_log<T>(
@@ -218,7 +217,17 @@ pub(crate) enum Error {
     MultipleWriteTransaction,
 
     #[error("Error in database backend")]
-    Heed(#[from] heed::Error),
+    Heed(#[source] Box<dyn std::error::Error + Send + Sync>),
+}
+
+fn heed_err(e: heed::Error) -> Error {
+    Error::Heed(format!("{}", e).into())
+}
+
+impl From<heed::Error> for Error {
+    fn from(e: heed::Error) -> Self {
+        heed_err(e)
+    }
 }
 
 impl warp::reject::Reject for Error {}

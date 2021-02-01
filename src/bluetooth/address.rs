@@ -5,9 +5,7 @@ use serde::{
 use std::fmt;
 
 #[repr(transparent)]
-#[derive(
-    Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug, zerocopy::FromBytes, zerocopy::AsBytes,
-)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct BluetoothAddress(u64);
 
 const EXAMPLE_BLUETOOTH_ADDR: &str = "00:11:22:33:FF:EE";

@@ -96,7 +96,7 @@ pub(crate) enum SensorState {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, zerocopy::FromBytes, zerocopy::AsBytes)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct RawSensorValues {
     pub(crate) temperature: i16,
     pub(crate) humidity: u16,
