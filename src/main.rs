@@ -5,20 +5,16 @@ mod dummy;
 mod http;
 mod opt;
 mod sensor;
+mod tasks;
 mod timestamp;
 
 use crate::{bluetooth::BluetoothAddress, dummy::dummy_sensor, opt::Opt};
 use clap::Clap;
 use config::Config;
-use db::AddrDbEntry;
 use eyre::Context as _;
-use futures_util::{
-    stream::{self, Stream},
-    StreamExt,
-};
+use futures_util::stream::{self, Stream};
 use sensor::SensorState;
-use std::{collections::BTreeMap, fmt::Write, net::SocketAddr, sync::Arc, time::Duration};
-use timestamp::Timestamp;
+use std::{collections::BTreeMap, net::SocketAddr, sync::Arc};
 use tokio::{signal::unix, sync::RwLock, task};
 use unix::SignalKind;
 
@@ -73,12 +69,12 @@ async fn run() -> Result<(), eyre::Error> {
         }
     }
 
-    let update_task = task::spawn(update_task(ctx.clone(), stream::select_all(sources)));
+    let update_task = task::spawn(tasks::update(ctx.clone(), stream::select_all(sources)));
 
     if let Some(ref options) = config.mqtt_options {
         let (cxn, _) =
             tokio_mqtt::Connection::connect(options, "ble-weatherstation-central", 60).await?;
-        task::spawn(mqtt_publish_task(ctx.clone(), cxn));
+        task::spawn(tasks::mqtt_publish(ctx.clone(), cxn));
     }
 
     let mut term = unix::signal(SignalKind::terminate()).unwrap();
@@ -113,85 +109,6 @@ async fn run() -> Result<(), eyre::Error> {
     bluetooth_thread.join().expect("Bluetooth thread crashed")?;
 
     Ok(())
-}
-
-async fn mqtt_publish_task(
-    ctx: Context,
-    mut cxn: tokio_mqtt::Connection,
-) -> Result<(), tokio_mqtt::Error> {
-    let mut topic_buf = String::new();
-    let mut interval = tokio::time::interval(Duration::from_secs(60));
-    let mut json_buf = Vec::new();
-    loop {
-        interval.tick().await;
-        let sensors = ctx.sensors.read().await;
-        for (addr, state) in &*sensors {
-            if let SensorState::Connected(values) = state {
-                topic_buf.clear();
-                write!(topic_buf, "sensors/weatherstation/{}", addr).unwrap();
-                serde_json::to_writer(std::io::Cursor::new(&mut json_buf), &values).unwrap();
-                // TODO: figure out what happens when mqtt server dies
-                if let Err(e) = cxn
-                    .publish(
-                        tokio_mqtt::TopicName::new(topic_buf.clone()).unwrap(),
-                        json_buf.clone(),
-                    )
-                    .await
-                {
-                    tracing::error!("Failed publishing to mqtt server: {}", e);
-                }
-            }
-        }
-    }
-}
-
-async fn update_task(
-    ctx: Context,
-    mut updates: impl Stream<Item = BTreeMap<BluetoothAddress, SensorState>> + Unpin,
-) -> Result<(), db::Error> {
-    let mut interval = tokio::time::interval(Duration::from_secs(1 * 60));
-    loop {
-        // TODO: make both arms a function
-        tokio::select! {
-            _ = interval.tick() => {
-                let sensors = ctx.sensors.read().await;
-                let now = Timestamp::now();
-                let mut txn  = ctx.db.log_txn()?;
-                for (addr, state) in &*sensors {
-                    if let SensorState::Connected(values) = state {
-                        txn.log(*addr, now, *values)?;
-                    }
-                }
-                txn.commit()?;
-            }
-            update = updates.next() => {
-                match update {
-                    Some(update) => {
-                        let mut new_sensors = Vec::new();
-                        {
-                            let txn = ctx.db.read_txn()?;
-                            for &addr in update.keys() {
-                                if ctx.db.get_addr(&txn, addr)?.is_none() {
-                                    new_sensors.push(addr);
-                                    tracing::info!("Memorized new sensor {}", addr);
-                                }
-                            }
-                        }
-                        if !new_sensors.is_empty() {
-                            let mut txn = ctx.db.write_txn()?;
-                            for addr in new_sensors {
-                                ctx.db.put_addr(&mut txn, addr, &AddrDbEntry::default())?;
-                            }
-                            txn.commit()?;
-                        }
-
-                        ctx.sensors.write().await.extend(update);
-                    }
-                    None => break Ok(()),
-                }
-            }
-        }
-    }
 }
 
 #[derive(derive_more::Deref, Clone)]
